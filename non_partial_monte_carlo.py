@@ -143,6 +143,7 @@ def plot_rejection_curves(
     results: dict[str, dict[float, float]],
     save_path: str | None = None,
     figsize_scale: float = 1.0,
+    fill_vertical_zero_line: list = None
 ):
     if len(results) == 0:
         return
@@ -165,6 +166,14 @@ def plot_rejection_curves(
     for ax, (name, data), color in zip(axes, results.items(), colors):
         alphas = np.array(sorted(data.keys()))
         freqs = np.array([data[a] for a in alphas])
+        if name.split(":")[-1].strip() in fill_vertical_zero_line:
+            ax.plot(
+                [0.0, 0.0],
+                [0.0, freqs[0]],
+                linestyle='--', 
+                linewidth=1.6, 
+                color=color
+            )
 
         ax.plot(
             alphas,
@@ -208,6 +217,3 @@ def plot_rejection_curves(
             plt.savefig(save_path, bbox_inches="tight")
 
     plt.show()
-
-
-

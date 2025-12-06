@@ -139,36 +139,75 @@ def monte_carlo_conditional_relevance_prodecure(T, beta, gamma, sets_of_f2_indic
     return result
 
 
-def plot_rejection_curves(results: dict[str, dict[float, float]]):
-    n_tests = len(results)
-    if n_tests == 0:
+def plot_rejection_curves(
+    results: dict[str, dict[float, float]],
+    save_path: str | None = None,
+    figsize_scale: float = 1.0,
+):
+    if len(results) == 0:
         return
-    
+
+    plt.style.use('seaborn-v0_8-whitegrid')
+
+    n_tests = len(results)
     rows = int(np.ceil(np.sqrt(n_tests)))
     cols = int(np.ceil(n_tests / rows))
-    
-    fig, axes = plt.subplots(rows, cols, figsize=(cols*4, rows*3))
-    axes = axes.flatten() if n_tests > 1 else [axes]
-    
-    for ax, (test_name, data) in zip(axes, results.items()):
-        alphas = sorted(data.keys())
-        freqs = [data[a] for a in alphas]
-        
-        ax.plot(alphas, freqs, 'o-', linewidth=2)
-        ax.plot([0, 1], [0, 1], 'r--', alpha=0.3)
-        ax.set_xlabel('Alpha')
-        ax.set_ylabel('Rejection Freq')
-        ax.set_title(test_name, fontsize=10)
-        ax.grid(True, alpha=0.3)
-        ax.set_xlim(-0.05, 1.05)
-        ax.set_ylim(-0.05, 1.05)
-    
-    for i in range(len(results), len(axes)):
-        axes[i].axis('off')
-    
-    plt.tight_layout()
-    plt.show()
 
+    fig, axes = plt.subplots(
+        rows, cols,
+        figsize=(cols * 4.2 * figsize_scale, rows * 3.2 * figsize_scale),
+        dpi=150
+    )
+    axes = axes.flatten() if n_tests > 1 else [axes]
+
+    colors = plt.cm.tab10(np.linspace(0, 1, n_tests))
+
+    for ax, (name, data), color in zip(axes, results.items(), colors):
+        alphas = np.array(sorted(data.keys()))
+        freqs = np.array([data[a] for a in alphas])
+
+        ax.plot(
+            alphas,
+            freqs,
+            linestyle="--",
+            linewidth=1.6,
+            color=color
+        )
+
+        ax.plot(
+            [0, 1],
+            [0, 1],
+            linestyle=":",
+            linewidth=1,
+            color="black",
+            alpha=0.2
+        )
+
+        ax.set_title(name, fontsize=11, fontweight="semibold")
+        ax.set_xlabel("Significance Level", fontsize=10)
+        ax.set_ylabel("Rejection Frequency", fontsize=10)
+
+        ax.set_xlim(-0.02, 1.02)
+        ax.set_ylim(-0.02, 1.02)
+
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+
+        ax.grid(True, alpha=0.25)
+        ax.margins(x=0.05, y=0.05)
+
+    for i in range(n_tests, len(axes)):
+        axes[i].axis("off")
+
+    plt.tight_layout()
+
+    if save_path is not None:
+        if save_path.endswith(".svg"):
+            plt.savefig(save_path, format="svg")
+        else:
+            plt.savefig(save_path, bbox_inches="tight")
+
+    plt.show()
 
 
 

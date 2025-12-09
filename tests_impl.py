@@ -96,7 +96,7 @@ def unconditional_relevance(
     m2 = len(f2_indexes)
     m1 = m - m2
     assert m2 > 0, "Нужно указать хотя бы один момент в f2_indexes"
-    assert m1 >= k, "Требуется m1 >= k (идентифицируемость на f1)"
+    # assert m1 >= k, "Требуется m1 >= k (идентифицируемость на f1)"
 
     data_ag = {key: anp.asarray(val) for key, val in data.items()}
     def get_data_point(t: int) -> Dict[str, anp.ndarray]:
@@ -191,10 +191,8 @@ def unconditional_relevance(
 
     H2 = anp.zeros((m2 * k, k))
     for r, i in enumerate(f2_indexes):
-        Hi = hessian(phi_i_factory(i))(theta_hat)
-        H2 = anp.concatenate([H2[:r*k, :],
-                              Hi,
-                              H2[(r+1)*k:, :]], axis=0) if r < m2 else Hi
+        Hi = hessian(phi_i_factory(i))(theta_hat)   # (k x k)
+        H2[r*k:(r+1)*k, :] = Hi
     vprint("DONE")
 
     # 6) B = [B_f, P]
@@ -225,7 +223,7 @@ def unconditional_relevance(
     p_value = 1.0 - chi2.cdf(W, df=m2 * k)
     vprint("[TEST DONE]")
 
-    return W, float(p_value), theta_hat
+    return W, float(p_value), np.array(theta_hat)
 
 
 def conditional_relevance(
@@ -440,7 +438,7 @@ def conditional_relevance(
     p_value = float(1.0 - chi2.cdf(W, df=m2*k))
     vprint("[TEST DONE]")
 
-    return W, p_value, theta_hat
+    return W, p_value, np.array(theta_hat)
 
 
 def partial_unconditional_relevance(
@@ -497,7 +495,7 @@ def partial_unconditional_relevance(
     m2 = len(f2_indexes)
     m1 = m - m2
     assert m2 > 0, "Нужно указать хотя бы один момент в f2_indexes"
-    assert m1 >= k, "Требуется m1 >= k (идентифицируемость на f1)"
+    # assert m1 >= k, "Требуется m1 >= k (идентифицируемость на f1)"
 
     data_ag = {key: anp.asarray(val) for key, val in data.items()}
     def get_data_point(t: int) -> Dict[str, anp.ndarray]:
@@ -594,10 +592,8 @@ def partial_unconditional_relevance(
 
     H2 = anp.zeros((m2 * k, k))
     for r, i in enumerate(f2_indexes):
-        Hi = hessian(phi_i_factory(i))(theta_hat)
-        H2 = anp.concatenate([H2[:r*k, :],
-                              Hi,
-                              H2[(r+1)*k:, :]], axis=0) if r < m2 else Hi
+        Hi = hessian(phi_i_factory(i))(theta_hat)   # (k x k)
+        H2[r*k:(r+1)*k, :] = Hi
     vprint("DONE")
 
     # 6) B = [B_f, P]
@@ -634,7 +630,7 @@ def partial_unconditional_relevance(
     p_value = 1.0 - chi2.cdf(W, df=m2 * ka)
     vprint("[TEST DONE]")
 
-    return W, float(p_value), theta_hat
+    return W, float(p_value), np.array(theta_hat)
 
 
 def partial_conditional_relevance(
@@ -858,4 +854,4 @@ def partial_conditional_relevance(
     p_value = float(1.0 - chi2.cdf(W, df=m2*ka))
     vprint("[TEST DONE]")
 
-    return W, p_value, theta_hat
+    return W, p_value, np.array(theta_hat)

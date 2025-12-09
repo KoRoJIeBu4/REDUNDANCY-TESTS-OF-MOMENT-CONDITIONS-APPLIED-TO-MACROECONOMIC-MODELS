@@ -7,12 +7,13 @@ from joblib import Parallel, delayed
 
 MOMENTS = ("Z1", "Z2", "Z3", "Z4", "Z5")
 
+
 def create_observations(T, beta, gamma):
-    Z1 = np.random.poisson(4, size=T)       # relevant
+    Z1 = np.random.poisson(4, size=T)             # relevant
     Z2 = np.random.exponential(scale=50, size=T)  # relevant
-    Z3 = np.random.normal(size=T)           # irrelevant
-    Z4 = np.random.uniform(-10, 10, size=T) # irrelevant
-    Z5 = np.random.binomial(1, 0.3, size=T) # relevant
+    Z3 = np.random.normal(size=T)                 # irrelevant
+    Z4 = np.random.uniform(-10, 10, size=T)       # irrelevant
+    Z5 = np.random.binomial(1, 0.3, size=T)       # relevant
     
     mu_c = 0.01
     rho_c = 0.9

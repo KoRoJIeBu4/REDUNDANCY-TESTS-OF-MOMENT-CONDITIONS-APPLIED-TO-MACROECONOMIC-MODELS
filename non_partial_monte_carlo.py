@@ -167,7 +167,7 @@ def plot_rejection_curves(
     for ax, (name, data), color in zip(axes, results.items(), colors):
         alphas = np.array(sorted(data.keys()))
         freqs = np.array([data[a] for a in alphas])
-        if name.split(":")[-1].strip() in fill_vertical_zero_line:
+        if fill_vertical_zero_line and name.split(":")[-1].strip() in fill_vertical_zero_line:
             ax.plot(
                 [0.0, 0.0],
                 [0.0, freqs[0]],

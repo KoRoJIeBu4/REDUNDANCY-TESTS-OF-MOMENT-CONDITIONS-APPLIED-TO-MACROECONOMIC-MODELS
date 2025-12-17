@@ -64,7 +64,9 @@ def calibrate_mu_r_and_return_original_data(beta, gamma,
 
     return C_ratio.detach(), R.detach()
 
-
+# ПРОЦЕСС ГЕНЕРАЦИИ ДАННЫХ
+# Основная идея в корреляции нужных инструментов с производными
+# А также формировании стохастического процесса генерации инструментов
 def generate_Z_for_CR(
         beta, 
         gamma, 

@@ -142,6 +142,19 @@ def test_partial_unconditional_relevance_prodecure(beta, gamma, T, f2_indices, a
     )
 
 
+def test_partial_conditional_relevance_prodecure(beta, gamma, T, f2_indices, a_indices):
+    data = generate_data(beta, gamma, T)
+    theta_init = np.array([0.0, 0.0])
+    moments = [make_moment(name) for name in MOMENTS]
+    return partial_conditional_relevance(
+        data=data, 
+        moments=moments,
+        f2_indexes=f2_indices, 
+        a_indexes=a_indices,
+        theta_init=theta_init
+    )
+
+
 def calculate_rejection_frequency(pvalues, alpha):
     return sum(p <= alpha for p in pvalues) / len(pvalues)
 
@@ -193,6 +206,50 @@ def monte_carlo_partial_unconditional_relevance_prodecure(
         moments = " ".join(MOMENTS[i] for i in _set[0])
         name_thetas = " ".join(map(lambda x: "beta" if x == 0 else "gamma", _set[1]))
         name = f"[PARTIAL UNCONDITIONAL RELEVANCE]: {moments} FOR {name_thetas}"
+        result[name] = alphas_to_rej_freq
+    
+    return result
+
+
+def monte_carlo_partial_conditional_relevance_prodecure( 
+        sets_of_f2_indices,
+        sets_of_a_indices,
+        B,
+        num_alphas,
+        n_jobs=-1
+    ):
+    beta = 0.97
+    gamma = 5
+    T = 250
+
+
+    def run_simulation(beta, gamma, T):
+        results = {}
+        for f2_indices, a_indices in zip(sets_of_f2_indices, sets_of_a_indices):
+            W, pval, theta_est = test_partial_conditional_relevance_prodecure(
+                beta, gamma, T,
+                f2_indices,
+                a_indices
+            )
+            results[(tuple(f2_indices), tuple(a_indices))] = pval
+        return results
+    
+    
+    all_results = Parallel(n_jobs=n_jobs)(
+        delayed(run_simulation)(beta, gamma, T) for _ in tqdm(range(B), desc="simulating many times")
+    )
+    
+    set_to_pval = {(tuple(_set_f), tuple(_set_a)): [] for _set_f, _set_a in zip(sets_of_f2_indices, sets_of_a_indices)}
+    for result in all_results:
+        for _set, pval in result.items():
+            set_to_pval[_set].append(pval)
+    
+    result = {}
+    for _set, pvals in set_to_pval.items():
+        alphas_to_rej_freq = calculate_alphas_to_rejection_frequency(pvals, num_alphas)
+        moments = " ".join(MOMENTS[i] for i in _set[0])
+        name_thetas = " ".join(map(lambda x: "beta" if x == 0 else "gamma", _set[1]))
+        name = f"[PARTIAL CONDITIONAL RELEVANCE]: {moments} FOR {name_thetas}"
         result[name] = alphas_to_rej_freq
     
     return result

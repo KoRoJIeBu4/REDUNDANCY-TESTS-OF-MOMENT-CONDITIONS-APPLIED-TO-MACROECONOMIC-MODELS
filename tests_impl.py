@@ -5,7 +5,7 @@ from scipy.optimize import minimize
 from scipy.stats import chi2
 from typing import Callable, Tuple, List, Dict, Any
 
-
+    
 def vec(A):
     return anp.reshape(A.T, (-1,))
 

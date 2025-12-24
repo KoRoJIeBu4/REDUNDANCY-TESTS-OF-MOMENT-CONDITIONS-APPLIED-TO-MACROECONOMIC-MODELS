@@ -87,6 +87,8 @@ def generate_Z_for_CR(
     grad_gamma = -beta * C_ratio ** (-gamma) * R * torch.log(C_ratio)
 
     Z1 = 2 * grad_beta + 0.5 * grad_gamma + eps1            # релевантен для beta и gamma
+
+    ####### Для conditional теста Z2 выкидывается!!! #############
     Z2 = 10 * grad_gamma + eps2                             # только gamma
     Z3 = 0.5 * grad_beta + eps3                             # только beta
     Z4 = eps4                                               # нерелевантен

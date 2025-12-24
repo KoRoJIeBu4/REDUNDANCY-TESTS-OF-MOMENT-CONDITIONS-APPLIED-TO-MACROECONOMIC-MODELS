@@ -140,7 +140,8 @@ def test_partial_unconditional_relevance_prodecure(beta, gamma, T, f2_indices, a
         moments=moments,
         f2_indexes=f2_indices, 
         a_indexes=a_indices,
-        theta_init=theta_init
+        theta_init=theta_init,
+        ridge=0.0
     )
 
 
@@ -153,7 +154,8 @@ def test_partial_conditional_relevance_prodecure(beta, gamma, T, f2_indices, a_i
         moments=moments,
         f2_indexes=f2_indices, 
         a_indexes=a_indices,
-        theta_init=theta_init
+        theta_init=theta_init,
+        ridge=0.0,
     )
 
 

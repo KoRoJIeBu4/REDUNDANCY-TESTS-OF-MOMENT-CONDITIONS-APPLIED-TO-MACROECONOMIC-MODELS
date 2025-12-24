@@ -52,7 +52,7 @@ def unconditional_relevance(
     moments: List[Callable],
     f2_indexes: List[int],
     theta_init: np.ndarray,
-    ridge: float = 1e-8,
+    ridge: float = 0.0,
     verbose: bool = False
 ) -> Tuple[float, float, np.array]:
     '''
@@ -156,7 +156,7 @@ def unconditional_relevance(
 
     def gmm_objective(theta):
         fb = fbar(anp.asarray(theta))
-        Oinv = anp.linalg.inv(Omega0 + ridge * anp.eye(m))
+        Oinv = anp.linalg.pinv(Omega0 + ridge * anp.eye(m))
         return float(fb.T @ Oinv @ fb)
 
     vprint('[ESTIMATING FINAL THETA]: ', end='')
@@ -172,7 +172,7 @@ def unconditional_relevance(
     vprint('[ESTIMATING FINAL OMEGA]: ', end='')
     f_mat, G_tens, G = compute_f_and_G_all(theta_hat)
     Omega = compute_Omega_from_f_mat(f_mat)
-    Oinv = anp.linalg.inv(Omega + ridge * anp.eye(m))
+    Oinv = anp.linalg.pinv(Omega + ridge * anp.eye(m))
     vprint("DONE")
 
     # 4) g2 = vec(G2^T)
@@ -198,7 +198,7 @@ def unconditional_relevance(
     # 6) B = [B_f, P]
     vprint('[ESTIMATING B]: ', end='')
     middle = G.T @ Oinv @ G
-    middle_inv = anp.linalg.inv(middle + ridge * anp.eye(k))
+    middle_inv = anp.linalg.pinv(middle + ridge * anp.eye(k))
     B_f = H2 @ middle_inv @ G.T @ Oinv
     P = make_selector_P(m=m, k=k, f2_indexes=f2_indexes)
     B = anp.concatenate([B_f, P], axis=1)
@@ -219,7 +219,7 @@ def unconditional_relevance(
 
     Sigma_g2 = B @ Sigma_r @ B.T
     Sigma_g2 = Sigma_g2 + ridge * anp.eye(m2 * k)
-    W = float(T * (g2.T @ np.linalg.inv(Sigma_g2) @ g2))
+    W = float(T * (g2.T @ np.linalg.pinv(Sigma_g2) @ g2))
     p_value = 1.0 - chi2.cdf(W, df=m2 * k)
     vprint("[TEST DONE]")
 
@@ -231,7 +231,7 @@ def conditional_relevance(
     moments: List[Callable],
     f2_indexes: List[int],
     theta_init: np.ndarray,
-    ridge: float = 1e-8,
+    ridge: float = 0.0,
     verbose: bool = False
 ) -> Tuple[float, float, np.array]:
     '''
@@ -334,7 +334,7 @@ def conditional_relevance(
 
     def gmm_objective(theta):
         fb = fbar(anp.asarray(theta))
-        Oinv = anp.linalg.inv(Omega0 + ridge * anp.eye(m))
+        Oinv = anp.linalg.pinv(Omega0 + ridge * anp.eye(m))
         return float(fb.T @ Oinv @ fb)
 
     vprint('[ESTIMATING FINAL THETA]: ', end='')
@@ -350,7 +350,7 @@ def conditional_relevance(
     vprint('[ESTIMATING FINAL OMEGA]: ', end='')
     f_mat, G_tens, G = compute_f_and_G_all(theta_hat)
     Omega = compute_Omega_from_f_mat(f_mat)
-    Oinv = anp.linalg.inv(Omega + ridge * anp.eye(m))
+    Oinv = anp.linalg.pinv(Omega + ridge * anp.eye(m))
     vprint('[DONE]')
 
 
@@ -358,7 +358,7 @@ def conditional_relevance(
     vprint('[ESTIMATING g_delta: ]', end='')
     Omega21 = Omega[f2_indexes][:,f1_indexes]
     Omega11 = Omega[f1_indexes][:,f1_indexes]
-    Omega11_inv = np.linalg.inv(Omega11 + ridge * anp.eye(m1))
+    Omega11_inv = np.linalg.pinv(Omega11 + ridge * anp.eye(m1))
     G2 = G[f2_indexes, :]
     G1 = G[f1_indexes, :]
     Gdelta_T = G2 - Omega21 @ Omega11_inv @ G1
@@ -401,7 +401,7 @@ def conditional_relevance(
     C_omega = (anp.kron(A_right, B_right) - anp.kron(S2, B_right)) @ Dm
 
     middle = G.T @ Oinv @ G
-    middle_inv = anp.linalg.inv(middle + ridge * anp.eye(k))
+    middle_inv = anp.linalg.pinv(middle + ridge * anp.eye(k))
     Cf = (Ch @ H_big + C_omega @ Q) @ middle_inv @ G.T @ Oinv
 
     Cg1 = - anp.kron(Omega21 @ Omega11_inv, anp.eye(k))
@@ -434,7 +434,7 @@ def conditional_relevance(
     Sigma_g_delta = C_total @ Sigma_r @ C_total.T + ridge * anp.eye(m2 * k)
 
     # 7) Строим финальную статистику W
-    W = float(T) * gdelta_vec.T @ np.linalg.inv(Sigma_g_delta) @ gdelta_vec
+    W = float(T) * gdelta_vec.T @ np.linalg.pinv(Sigma_g_delta) @ gdelta_vec
     p_value = float(1.0 - chi2.cdf(W, df=m2*k))
     vprint("[TEST DONE]")
 
@@ -447,7 +447,7 @@ def partial_unconditional_relevance(
     f2_indexes: List[int],
     a_indexes: List[int],
     theta_init: np.ndarray,
-    ridge: float = 1e-8,
+    ridge: float = 0.0,
     verbose: bool = False
 ) -> Tuple[float, float, np.array]:
     '''
@@ -555,7 +555,7 @@ def partial_unconditional_relevance(
 
     def gmm_objective(theta):
         fb = fbar(anp.asarray(theta))
-        Oinv = anp.linalg.inv(Omega0 + ridge * anp.eye(m))
+        Oinv = anp.linalg.pinv(Omega0 + ridge * anp.eye(m))
         return float(fb.T @ Oinv @ fb)
 
     vprint('[ESTIMATING FINAL THETA]: ', end='')
@@ -571,7 +571,7 @@ def partial_unconditional_relevance(
     vprint('[ESTIMATING FINAL OMEGA]: ', end='')
     f_mat, G_tens, G = compute_f_and_G_all(theta_hat)
     Omega = compute_Omega_from_f_mat(f_mat)
-    Oinv = anp.linalg.inv(Omega + ridge * anp.eye(m))
+    Oinv = anp.linalg.pinv(Omega + ridge * anp.eye(m))
     vprint("DONE")
 
     # 4) g2a = vec(G2A^T)
@@ -599,7 +599,7 @@ def partial_unconditional_relevance(
     # 6) B = [B_f, P]
     vprint('[ESTIMATING B]: ', end='')
     middle = G.T @ Oinv @ G
-    middle_inv = anp.linalg.inv(middle + ridge * anp.eye(k))
+    middle_inv = anp.linalg.pinv(middle + ridge * anp.eye(k))
     B_f = H2 @ middle_inv @ G.T @ Oinv
     P = make_selector_P(m=m, k=k, f2_indexes=f2_indexes)
     B = anp.concatenate([B_f, P], axis=1)
@@ -626,7 +626,7 @@ def partial_unconditional_relevance(
     right = np.kron(np.eye(m2), R_A.T)
     Sigma_g2a = left @ Sigma_g2 @ right
     
-    W = float(T * (g2a.T @ np.linalg.inv(Sigma_g2a) @ g2a))
+    W = float(T * (g2a.T @ np.linalg.pinv(Sigma_g2a) @ g2a))
     p_value = 1.0 - chi2.cdf(W, df=m2 * ka)
     vprint("[TEST DONE]")
 
@@ -639,7 +639,7 @@ def partial_conditional_relevance(
     f2_indexes: List[int],
     a_indexes: List[int],
     theta_init: np.ndarray,
-    ridge: float = 1e-8,
+    ridge: float = 0.0,
     verbose: bool = False
 ) -> Tuple[float, float, np.array]:
     '''
@@ -745,7 +745,7 @@ def partial_conditional_relevance(
 
     def gmm_objective(theta):
         fb = fbar(anp.asarray(theta))
-        Oinv = anp.linalg.inv(Omega0 + ridge * anp.eye(m))
+        Oinv = anp.linalg.pinv(Omega0 + ridge * anp.eye(m))
         return float(fb.T @ Oinv @ fb)
 
     vprint('[ESTIMATING FINAL THETA]: ', end='')
@@ -761,7 +761,7 @@ def partial_conditional_relevance(
     vprint('[ESTIMATING FINAL OMEGA]: ', end='')
     f_mat, G_tens, G = compute_f_and_G_all(theta_hat)
     Omega = compute_Omega_from_f_mat(f_mat)
-    Oinv = anp.linalg.inv(Omega + ridge * anp.eye(m))
+    Oinv = anp.linalg.pinv(Omega + ridge * anp.eye(m))
     vprint('[DONE]')
 
 
@@ -769,7 +769,7 @@ def partial_conditional_relevance(
     vprint('[ESTIMATING g_delta: ]', end='')
     Omega21 = Omega[f2_indexes][:,f1_indexes]
     Omega11 = Omega[f1_indexes][:,f1_indexes]
-    Omega11_inv = np.linalg.inv(Omega11 + ridge * np.eye(m1))
+    Omega11_inv = np.linalg.pinv(Omega11 + ridge * np.eye(m1))
     G2 = G[f2_indexes, :]
     G1 = G[f1_indexes, :]
     Gdelta_T = G2 - Omega21 @ Omega11_inv @ G1
@@ -814,7 +814,7 @@ def partial_conditional_relevance(
     C_omega = (anp.kron(A_right, B_right) - anp.kron(S2, B_right)) @ Dm
 
     middle = G.T @ Oinv @ G
-    middle_inv = anp.linalg.inv(middle + ridge * anp.eye(k))
+    middle_inv = anp.linalg.pinv(middle + ridge * anp.eye(k))
     Cf = (Ch @ H_big + C_omega @ Q) @ middle_inv @ G.T @ Oinv
 
     Cg1 = - anp.kron(Omega21 @ Omega11_inv, anp.eye(k))
@@ -850,7 +850,7 @@ def partial_conditional_relevance(
     Sigma_g_delta_a = left @ Sigma_g_delta @ right
 
     # 7) Строим финальную статистику W
-    W = float(T) * gdelta_a_vec.T @ np.linalg.inv(Sigma_g_delta_a) @ gdelta_a_vec
+    W = float(T) * gdelta_a_vec.T @ np.linalg.pinv(Sigma_g_delta_a) @ gdelta_a_vec
     p_value = float(1.0 - chi2.cdf(W, df=m2*ka))
     vprint("[TEST DONE]")
 

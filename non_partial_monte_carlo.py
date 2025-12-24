@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from joblib import Parallel, delayed
 
 
-MOMENTS = ("Z1", "Z2", "Z3", "Z4", "Z5")
+MOMENTS = ("Z1", "Z2", "Z3", "Z4", "Z5", "Z6")
 
 
 def create_observations(T, beta, gamma):
@@ -14,6 +14,7 @@ def create_observations(T, beta, gamma):
     Z3 = np.random.normal(size=T)                 # irrelevant
     Z4 = np.random.uniform(-10, 10, size=T)       # irrelevant
     Z5 = np.random.binomial(1, 0.3, size=T)       # relevant
+    Z6 = Z2 + np.random.randn(T)                  # conditionally irrelevant
     
     mu_c = 0.01
     rho_c = 0.9
@@ -45,6 +46,7 @@ def create_observations(T, beta, gamma):
         "Z3": Z3,
         "Z4": Z4,
         "Z5": Z5,
+        "Z6": Z6,
     }
 
     return data
@@ -62,14 +64,26 @@ def test_unconditional_relevance_prodecure(T, beta, gamma, f2_indices):
     data = create_observations(T=T, beta=beta, gamma=gamma)
     theta_init = np.array([0.0, 0.0])
     moments = [make_moment(name) for name in MOMENTS]
-    return unconditional_relevance(data, moments, f2_indices, theta_init)
+    return unconditional_relevance(
+        data=data, 
+        moments=moments, 
+        f2_indexes=f2_indices, 
+        theta_init=theta_init,
+        ridge=0.0,
+    )
 
 
 def test_conditional_relevance_prodecure(T, beta, gamma, f2_indices):
     data = create_observations(T=T, beta=beta, gamma=gamma)
     theta_init = np.array([0.0, 0.0])
     moments = [make_moment(name) for name in MOMENTS]
-    return conditional_relevance(data, moments, f2_indices, theta_init)
+    return conditional_relevance(
+        data=data, 
+        moments=moments, 
+        f2_indexes=f2_indices, 
+        theta_init=theta_init,
+        ridge=0.0,
+    )
 
 
 def calculate_rejection_frequency(pvalues, alpha):

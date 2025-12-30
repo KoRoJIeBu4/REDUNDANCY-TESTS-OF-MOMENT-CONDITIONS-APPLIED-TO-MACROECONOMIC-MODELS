@@ -68,8 +68,7 @@ def test_unconditional_relevance_prodecure(T, beta, gamma, f2_indices):
         data=data, 
         moments=moments, 
         f2_indexes=f2_indices, 
-        theta_init=theta_init,
-        ridge=0.0,
+        theta_init=theta_init
     )
 
 
@@ -81,8 +80,7 @@ def test_conditional_relevance_prodecure(T, beta, gamma, f2_indices):
         data=data, 
         moments=moments, 
         f2_indexes=f2_indices, 
-        theta_init=theta_init,
-        ridge=0.0,
+        theta_init=theta_init
     )
 
 

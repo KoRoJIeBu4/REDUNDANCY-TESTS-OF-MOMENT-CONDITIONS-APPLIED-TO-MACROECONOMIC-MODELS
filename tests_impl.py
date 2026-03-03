@@ -53,7 +53,7 @@ def unconditional_relevance(
     f2_indexes: List[int],
     theta_init: np.ndarray,
     verbose: bool = False
-) -> Tuple[float, float, np.array]:
+) -> Tuple[float, float, np.array, np.ndarray]:
     '''
     Процедура теста на безусловную релевантность моментов f2. Формально, проверяется равенство якобиана
     моментов G2 нулю. Если G2 = 0 статистически значимо, то в решении задачи оптимизации пул моментов
@@ -75,8 +75,8 @@ def unconditional_relevance(
 
     Return:
     ----------
-    tuple[float, float, np.array]
-        Результаты теста: значение статистики, p-value, оценку theta
+    tuple[float, float, np.array, np.ndarray]
+        Результаты теста: значение статистики, p-value, оценку theta, ковариационная матрица theta
     '''
     def vprint(*args, **kwargs):
         '''
@@ -214,12 +214,14 @@ def unconditional_relevance(
     Sigma_r = (Rc.T @ Rc) / (T - 1)
     vprint("DONE")
 
+    cov_theta = np.linalg.pinv(G.T @ Oinv @ G) / T
+
     Sigma_g2 = B @ Sigma_r @ B.T
     W = float(T * (g2.T @ np.linalg.pinv(Sigma_g2) @ g2))
     p_value = 1.0 - chi2.cdf(W, df=m2 * k)
     vprint("[TEST DONE]")
 
-    return W, float(p_value), np.array(theta_hat)
+    return W, float(p_value), np.array(theta_hat), cov_theta
 
 
 def conditional_relevance(
@@ -228,7 +230,7 @@ def conditional_relevance(
     f2_indexes: List[int],
     theta_init: np.ndarray,
     verbose: bool = False
-) -> Tuple[float, float, np.array]:
+) -> Tuple[float, float, np.array, np.ndarray]:
     '''
     Процедура теста на условную релевантность моментов f2 поверх моментов f1. Формально, проверяется равенство якобиана
     моментов G_delta нулю. Если G_delta = 0 статистически значимо, то исключение f2 не меняет кривизну теоретического GMM-критерия и асимптотическую
@@ -250,7 +252,7 @@ def conditional_relevance(
     Return:
     ----------
     tuple[float, float, np.array]
-        Результаты теста: значение статистики, p-value, оценку theta
+        Результаты теста: значение статистики, p-value, оценку theta, ковариационная матрица theta
     '''
     def vprint(*args, **kwargs):
         '''
@@ -427,11 +429,14 @@ def conditional_relevance(
     Sigma_g_delta = C_total @ Sigma_r @ C_total.T
 
     # 7) Строим финальную статистику W
+
+    cov_theta = np.linalg.pinv(G.T @ Oinv @ G) / T
+
     W = float(T) * gdelta_vec.T @ np.linalg.pinv(Sigma_g_delta) @ gdelta_vec
     p_value = float(1.0 - chi2.cdf(W, df=m2*k))
     vprint("[TEST DONE]")
 
-    return W, p_value, np.array(theta_hat)
+    return W, p_value, np.array(theta_hat), cov_theta
 
 
 def partial_unconditional_relevance(
@@ -441,7 +446,7 @@ def partial_unconditional_relevance(
     a_indexes: List[int],
     theta_init: np.ndarray,
     verbose: bool = False
-) -> Tuple[float, float, np.array]:
+) -> Tuple[float, float, np.array, np.ndarray]:
     '''
     Процедура теста на частичную безусловную релевантность моментов f2 для поднабора параметров (subset A). Формально, 
     проверяется равенства якобиана моментов G2A нулю. Если G2A = 0 статистически значимо, то в решении задачи оптимизации пул 
@@ -467,7 +472,7 @@ def partial_unconditional_relevance(
     Return:
     ----------
     tuple[float, float, np.array]
-        Результаты теста: значение статистики, p-value, оценку theta
+        Результаты теста: значение статистики, p-value, оценку theta, ковариационная матрица theta
     '''
     def vprint(*args, **kwargs):
         '''
@@ -615,11 +620,13 @@ def partial_unconditional_relevance(
     right = np.kron(np.eye(m2), R_A.T)
     Sigma_g2a = left @ Sigma_g2 @ right
     
+    cov_theta = np.linalg.pinv(G.T @ Oinv @ G) / T
+
     W = float(T * (g2a.T @ np.linalg.pinv(Sigma_g2a) @ g2a))
     p_value = 1.0 - chi2.cdf(W, df=m2 * ka)
     vprint("[TEST DONE]")
 
-    return W, float(p_value), np.array(theta_hat)
+    return W, float(p_value), np.array(theta_hat), cov_theta
 
 
 def partial_conditional_relevance(
@@ -629,7 +636,7 @@ def partial_conditional_relevance(
     a_indexes: List[int],
     theta_init: np.ndarray,
     verbose: bool = False
-) -> Tuple[float, float, np.array]:
+) -> Tuple[float, float, np.array, np.ndarray]:
     '''
     Процедура теста на частичную условную релевантность моментов f2 поверх моментов f1 на параметры из поднабора A. Формально, проверяется равенство якобиана
     моментов G_delta_A нулю. Если G_delta_A = 0 статистически значимо, то исключение f2 не меняет кривизну теоретического GMM-критерия и асимптотическую
@@ -653,7 +660,7 @@ def partial_conditional_relevance(
     Return:
     ----------
     tuple[float, float, np.array]
-        Результаты теста: значение статистики, p-value, оценку theta
+        Результаты теста: значение статистики, p-value, оценку theta, ковариационная матрица theta
     '''
     def vprint(*args, **kwargs):
         '''
@@ -836,8 +843,11 @@ def partial_conditional_relevance(
     Sigma_g_delta_a = left @ Sigma_g_delta @ right
 
     # 7) Строим финальную статистику W
+
+    cov_theta = np.linalg.pinv(G.T @ Oinv @ G) / T
+
     W = float(T) * gdelta_a_vec.T @ np.linalg.pinv(Sigma_g_delta_a) @ gdelta_a_vec
     p_value = float(1.0 - chi2.cdf(W, df=m2*ka))
     vprint("[TEST DONE]")
 
-    return W, p_value, np.array(theta_hat)
+    return W, p_value, np.array(theta_hat), cov_theta

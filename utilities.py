@@ -1,8 +1,14 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.patches import Ellipse
 import seaborn as sns
-from scipy.stats import norm
+from scipy.stats import norm, chi2
+import textwrap
+from tqdm.auto import tqdm
+from tests_impl import unconditional_relevance, conditional_relevance, partial_conditional_relevance, partial_unconditional_relevance
+from statsmodels.tsa.stattools import adfuller
+from itertools import combinations
 
 
 def analyze_high_correlations(df, threshold=0.7):
@@ -280,3 +286,459 @@ def plot_theta_estimates(
 
     plt.tight_layout()
     plt.show()
+
+
+def wald_test_pairwise(thetas, covs, names=None):
+    """
+    Pairwise Wald tests for equality of parameter vectors.
+    """
+
+    n = len(thetas)
+
+    if names is None:
+        names = [f"model_{i+1}" for i in range(n)]
+
+    results = []
+
+    for i in range(n):
+        for j in range(i+1, n):
+
+            theta_i = np.array(thetas[i])
+            theta_j = np.array(thetas[j])
+
+            V = covs[i] + covs[j]
+
+            diff = theta_i - theta_j
+
+            W = diff.T @ np.linalg.inv(V) @ diff
+
+            pval = 1 - chi2.cdf(W, df=2)
+
+            results.append({
+                "model_1": names[i],
+                "model_2": names[j],
+                "wald_stat": W,
+                "p_value": pval
+            })
+
+    return pd.DataFrame(results)
+
+
+def plot_gmm_estimates(thetas, covs, names=None, conf=0.95):
+
+    n = len(thetas)
+
+    if names is None:
+        names = [f"model_{i+1}" for i in range(n)]
+
+    names_wrapped = ["\n".join(textwrap.wrap(nm, 22)) for nm in names]
+
+    thetas = np.array(thetas)
+
+    betas = thetas[:,0]
+    gammas = thetas[:,1]
+
+    beta_se = np.sqrt([c[0][0] for c in covs])
+    gamma_se = np.sqrt([c[1][1] for c in covs])
+
+    z = np.sqrt(chi2.ppf(conf,1))
+
+    colors = plt.cm.tab10.colors
+    x = np.arange(n)
+
+    plt.figure(figsize=(13,7))
+
+    for i in range(n):
+
+        low = betas[i] - z*beta_se[i]
+        high = betas[i] + z*beta_se[i]
+
+        c = colors[i % len(colors)]
+
+        plt.vlines(x[i], low, high, colors=c, linewidth=2)
+
+        plt.hlines(low, x[i]-0.25, x[i]+0.25, colors=c, linestyles="dashed")
+        plt.hlines(high, x[i]-0.25, x[i]+0.25, colors=c, linestyles="dashed")
+
+        plt.scatter(x[i], betas[i], color=c, s=90, zorder=3)
+
+    plt.xticks(x, names_wrapped)
+    plt.ylabel("beta")
+    plt.title(f"Beta estimates ({int(conf*100)}% CI)")
+    plt.grid(alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+    plt.figure(figsize=(13,7))
+
+    for i in range(n):
+
+        low = gammas[i] - z*gamma_se[i]
+        high = gammas[i] + z*gamma_se[i]
+
+        c = colors[i % len(colors)]
+
+        plt.vlines(x[i], low, high, colors=c, linewidth=2)
+
+        plt.hlines(low, x[i]-0.25, x[i]+0.25, colors=c, linestyles="dashed")
+        plt.hlines(high, x[i]-0.25, x[i]+0.25, colors=c, linestyles="dashed")
+
+        plt.scatter(x[i], gammas[i], color=c, s=90, zorder=3)
+
+    plt.xticks(x, names_wrapped)
+    plt.ylabel("gamma")
+    plt.title(f"Gamma estimates ({int(conf*100)}% CI)")
+    plt.grid(alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+    plt.figure(figsize=(12,8))
+
+    chi_val = chi2.ppf(conf,2)
+
+    for i,(theta,cov,name) in enumerate(zip(thetas,covs,names)):
+
+        vals, vecs = np.linalg.eigh(cov)
+
+        angle = np.degrees(np.arctan2(*vecs[:,0][::-1]))
+
+        width,height = 2*np.sqrt(vals*chi_val)
+
+        c = colors[i % len(colors)]
+
+        ell = Ellipse(
+            xy=theta,
+            width=width,
+            height=height,
+            angle=angle,
+            alpha=0.25,
+            color=c
+        )
+
+        plt.gca().add_patch(ell)
+
+        plt.scatter(theta[0],theta[1],color=c,s=90)
+
+        plt.annotate(
+            name,
+            (theta[0],theta[1]),
+            xytext=(6,6),
+            textcoords="offset points"
+        )
+
+    plt.xlabel("beta")
+    plt.ylabel("gamma")
+    plt.title(f"Joint confidence region ({int(conf*100)}%)")
+
+    plt.grid(alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+
+def filter_stationary_series(
+    df: pd.DataFrame,
+    alpha: float = 0.05,
+    regression: str = "c",
+    autolag: str = "AIC",
+    verbose: bool = True
+):
+    """
+    Фильтрация стационарных временных рядов через тест Дики-Фуллера.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Таблица временных рядов
+    alpha : float
+        Уровень значимости
+    regression : str
+        Тип детерминированной части:
+        "c"  — константа
+        "ct" — константа + тренд
+        "n"  — без константы
+    autolag : str
+        Метод выбора лагов
+    verbose : bool
+        Печатать отчёт
+
+    Returns
+    -------
+    df_stationary : pd.DataFrame
+        Датафрейм только со стационарными рядами
+    report : pd.DataFrame
+        Таблица результатов теста
+    """
+
+    results = []
+
+    for col in df.columns:
+
+        series = df[col].dropna()
+
+        try:
+            stat, pvalue, lags, nobs, *_ = adfuller(
+                series,
+                regression=regression,
+                autolag=autolag
+            )
+
+            stationary = pvalue < alpha
+
+        except Exception:
+            stat = None
+            pvalue = None
+            stationary = False
+
+        results.append({
+            "variable": col,
+            "ADF_stat": stat,
+            "p_value": pvalue,
+            "stationary": stationary
+        })
+
+    report = pd.DataFrame(results)
+
+    stationary_cols = report.loc[
+        report["stationary"], "variable"
+    ].tolist()
+
+    df_stationary = df[stationary_cols].copy()
+
+    if verbose:
+
+        print("\nADF Stationarity Filtering")
+        print("=" * 40)
+        print(f"Significance level: {alpha}")
+        print()
+
+        print("Stationary variables:")
+        for v in stationary_cols:
+            print("  ✓", v)
+
+        removed = report.loc[~report["stationary"], "variable"].tolist()
+
+        if removed:
+            print("\nRemoved non-stationary variables:")
+            for v in removed:
+                print("  ✗", v)
+
+    return df_stationary, report
+
+
+def implement_URTA(input: pd.DataFrame, name: str, significance_level: float =0.05):
+    '''
+    Функция для формирования отчета по URTA
+    input: pd.DataFrame
+        Входной датасет, в котором обязательно есть колонки [C[t], R[t+1], C[t+1], C_ratio] и поле date является индексом
+    name: str
+        Название
+    significance_level: float
+        Уровень значимости
+    '''
+    assert isinstance(input.index, pd.DatetimeIndex)
+    df = input.copy()
+
+    cols = [col for col in df.columns if col not in ("C[t]", "R[t+1]", "C[t+1]", "C_ratio")]
+    data = {
+        "R[t+1]" : df['R[t+1]'],
+        "C_ratio" : df['C_ratio'],
+        "Const" : np.ones(len(df)),
+    }
+    for col in cols:
+        data[col] = df[col]
+    
+    def make_moment(name):
+        def moment(theta, dp):
+            beta, gamma = theta
+            m = beta * (dp['C_ratio'] ** (-gamma)) * (1 + dp['R[t+1]']) - 1
+            return m * dp[name]
+        return moment
+    MOMENT_NAMES = [col for col in data if col not in ("R[t+1]", "C_ratio")]
+    moments = [make_moment(name) for name in MOMENT_NAMES]
+
+    results = {}
+    for i, moment in tqdm(list(enumerate(MOMENT_NAMES))):
+        W, pval, theta, cov = unconditional_relevance(
+            data=data,
+            moments=moments,
+            f2_indexes=[i],
+            theta_init=[0, 0],
+        )
+        results[moment] = {
+            "W" : W,
+            "logW" : np.log(W),
+            "p_value" : pval
+        }
+
+    results = pd.DataFrame(results).T.sort_values(by=['p_value'])
+    results['group'] = name
+    results['relevance'] = results['p_value'].apply(lambda x: "🟢" if x < significance_level else "🔴")
+    results = results.reset_index().rename(columns={"index" : "moment"}).sort_values(by="logW", ascending=False)
+
+    return results
+
+
+def plot_moment_relevance(df, title=None):
+
+    df = df.sort_values("logW", ascending=True)
+
+    colors = df["relevance"].map({
+        "🟢": "#2C7BB6",
+        "🔴": "#D7191C"
+    })
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    bars = ax.barh(
+        df["moment"],
+        df["logW"],
+        color=colors,
+        alpha=0.9
+    )
+
+    for i, (logw, p) in enumerate(zip(df["logW"], df["p_value"])):
+        ax.text(
+            logw + 0.05,
+            i,
+            f"p={p:.3f}",
+            va="center",
+            fontsize=9
+        )
+
+    ax.set_xlabel("log(W statistic)")
+    ax.set_ylabel("Moment condition")
+
+    if title is not None:
+        ax.set_title(title)
+
+    from matplotlib.patches import Patch
+
+    legend_elements = [
+        Patch(facecolor="#2C7BB6", label="Relevant"),
+        Patch(facecolor="#D7191C", label="Not relevant")
+    ]
+
+    ax.legend(handles=legend_elements)
+
+    sns.despine()
+
+    plt.tight_layout()
+    plt.show()
+
+
+def implement_CRTA(input: pd.DataFrame,
+                   URTA_report: pd.DataFrame,
+                   significance_level: float = 0.05) -> pd.DataFrame:
+    """
+    Реализация CRTA (Conditional Relevance Test Algorithm).
+
+    Параметры
+    ----------
+    input : pd.DataFrame
+        Исходные данные. Должны содержать R[t+1], C_ratio и набор инструментов.
+
+    URTA_report : pd.DataFrame
+        Таблица результатов URTA со столбцами:
+        ['moment', 'W', 'logW', 'p_value', 'group'].
+
+    significance_level : float
+        Уровень значимости для теста условной релевантности.
+
+    Алгоритм
+    ----------
+    1. Отбираем безусловно релевантные моменты (p_value < significance_level).
+    2. Для каждого момента i:
+        - перебираем все комбинации остальных моментов
+        - запускаем conditional_relevance
+        - если p_value < significance_level — момент условно релевантен
+        - среди всех таких комбинаций выбираем ту,
+          где статистика W максимальна.
+    3. Формируем матрицу M размера (k × k):
+        строки — момент i,
+        столбцы — моменты j.
+
+        M[i,j] = 1  если момент j входит в оптимальный блок,
+        при котором момент i максимально условно релевантен.
+
+        иначе 0.
+
+    Возвращает
+    ----------
+    pd.DataFrame
+        Матрица включения моментов (0/1).
+    """
+
+    df = input.copy()
+
+    cols = [c for c in df.columns if c not in ("C[t]", "R[t+1]", "C[t+1]", "C_ratio")]
+
+    data = {
+        "R[t+1]": df["R[t+1]"],
+        "C_ratio": df["C_ratio"],
+        "Const": np.ones(len(df)),
+    }
+
+    for col in cols:
+        data[col] = df[col]
+
+    def make_moment(name):
+        def moment(theta, dp):
+            beta, gamma = theta
+            m = beta * (dp["C_ratio"] ** (-gamma)) * (1 + dp["R[t+1]"]) - 1
+            return m * dp[name]
+        return moment
+
+    MOMENT_NAMES = [c for c in data if c not in ("R[t+1]", "C_ratio")]
+    moments = [make_moment(name) for name in MOMENT_NAMES]
+
+    relevant_moments = URTA_report[
+        URTA_report["p_value"] < significance_level
+    ]["moment"].tolist()
+
+    result_matrix = pd.DataFrame(
+        0,
+        index=relevant_moments,
+        columns=relevant_moments
+    )
+
+    for moment_i in tqdm(relevant_moments):
+
+        others = [m for m in relevant_moments if m != moment_i]
+
+        best_W = -np.inf
+        best_block = None
+
+        for r in range(len(others) + 1):
+
+            for combo in combinations(others, r):
+
+                block = list(combo) + [moment_i]
+
+                f2_indexes = [MOMENT_NAMES.index(m) for m in block]
+
+                if len(moments) - len(f2_indexes) < 2:
+                    continue
+
+                W, pval, theta, cov = conditional_relevance(
+                    data=data,
+                    moments=moments,
+                    f2_indexes=f2_indexes,
+                    theta_init=[0, 0],
+                )
+
+                if pval < significance_level:
+
+                    if W > best_W:
+                        best_W = W
+                        best_block = block
+
+        if best_block is not None:
+
+            for m in best_block:
+                if m in result_matrix.columns:
+                    result_matrix.loc[moment_i, m] = 1
+
+    return result_matrix

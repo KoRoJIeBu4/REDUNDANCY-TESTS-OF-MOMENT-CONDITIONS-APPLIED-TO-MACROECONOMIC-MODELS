@@ -629,48 +629,25 @@ def plot_moment_relevance(df, title=None):
     plt.show()
 
 
-def implement_CRTA(input: pd.DataFrame,
-                   URTA_report: pd.DataFrame,
-                   significance_level: float = 0.05) -> pd.DataFrame:
-    """
-    Реализация CRTA (Conditional Relevance Test Algorithm).
-
-    Параметры
-    ----------
-    input : pd.DataFrame
-        Исходные данные. Должны содержать R[t+1], C_ratio и набор инструментов.
-
-    URTA_report : pd.DataFrame
-        Таблица результатов URTA со столбцами:
-        ['moment', 'W', 'logW', 'p_value', 'group'].
-
-    significance_level : float
-        Уровень значимости для теста условной релевантности.
-
-    Алгоритм
-    ----------
-    1. Отбираем безусловно релевантные моменты (p_value < significance_level).
-    2. Для каждого момента i:
-        - перебираем все комбинации остальных моментов
-        - запускаем conditional_relevance
-        - если p_value < significance_level — момент условно релевантен
-        - среди всех таких комбинаций выбираем ту,
-          где статистика W максимальна.
-    3. Формируем матрицу M размера (k × k):
-        строки — момент i,
-        столбцы — моменты j.
-
-        M[i,j] = 1  если момент j входит в оптимальный блок,
-        при котором момент i максимально условно релевантен.
-
-        иначе 0.
-
-    Возвращает
-    ----------
-    pd.DataFrame
-        Матрица включения моментов (0/1).
-    """
-
+def implement_CRTA(input: pd.DataFrame, name: str, significance_level: float = 0.05):
+    '''
+    Функция для формирования отчета по CRTA
+    input: pd.DataFrame
+        Входной датасет, в котором обязательно есть колонки [C[t], R[t+1], C[t+1], C_ratio] и поле date является индексом
+    name: str
+        Название
+    significance_level: float
+        Уровень значимости
+    
+    Идея:
+        Вот мы имеем набор инструментов. Для начала мы можем выделить все "базисные инструменты"
+        "Базисные" инструменты (🟢) - это те, для которых тест на conditional_relevance дал результат, что они условно релевантны к всему исходному набору
+        Для "оставшихся" интструментов хочется найти те, через которые они линейно выражаются в терминах якобианов других моментов
+        Возможны такие ситуации (z - текущий инструмент из "остальных", то есть "небазовый"):
+         1) z условно релевантен для базисных и условно НЕрелевантен для остальных (🟡)
+         2) z условно НЕрелевантен для базисных и условно релевантен для остальных (🟠)
+         3) z условно НЕрелевантен для базисных и условно НЕрелевантен для остальных (🔴)
+    '''
     df = input.copy()
 
     cols = [c for c in df.columns if c not in ("C[t]", "R[t+1]", "C[t+1]", "C_ratio")]
@@ -693,52 +670,72 @@ def implement_CRTA(input: pd.DataFrame,
 
     MOMENT_NAMES = [c for c in data if c not in ("R[t+1]", "C_ratio")]
     moments = [make_moment(name) for name in MOMENT_NAMES]
+    conditionally_relevant_moments = []
+    conditionally_irrelevant_moments = []
 
-    relevant_moments = URTA_report[
-        URTA_report["p_value"] < significance_level
-    ]["moment"].tolist()
+    for i in tqdm(range(len(moments)), desc="[stage 1]: determine basics"):
+        W, pval, theta, cov = conditional_relevance(
+            data=data,
+            moments=moments,
+            f2_indexes=[i],
+            theta_init=[0, 0],
+        )
+        if pval <= significance_level:
+            conditionally_relevant_moments.append((MOMENT_NAMES[i], W, pval, "🟢"))
+        else:
+            conditionally_irrelevant_moments.append((MOMENT_NAMES[i], W, pval))
 
-    result_matrix = pd.DataFrame(
-        0,
-        index=relevant_moments,
-        columns=relevant_moments
-    )
+    irrelevant_due_to_basics = []
+    irrelevant_due_to_others = []
+    irrelevant_due_to_both = []
+    
+    
 
-    for moment_i in tqdm(relevant_moments):
+    for z in tqdm([z[0] for z in conditionally_irrelevant_moments], desc="[stage 2]: determine rest instruments"):
+        idx = MOMENT_NAMES.index(z)
 
-        others = [m for m in relevant_moments if m != moment_i]
+        # Прогоняем z через базисные инструменты
+        basic_moments = [moments[i] for i in range(len(moments)) if MOMENT_NAMES[i] in [z[0] for z in conditionally_relevant_moments]]
+        if len(basic_moments) <= 1:
+            W_basic, pval_basic = None, float("inf")
+        else:
+            basic_moments.append(moments[idx])
+            W_basic, pval_basic, _, _ = conditional_relevance(
+                data=data,
+                moments=basic_moments,
+                f2_indexes=[len(basic_moments)-1],
+                theta_init=[0, 0],
+            )
 
-        best_W = -np.inf
-        best_block = None
+        # Прогоняем z через оставшиеся инструменты
+        rest_moments = [moments[i] for i in range(len(moments)) if MOMENT_NAMES[i] in [z[0] for z in conditionally_irrelevant_moments] and z != MOMENT_NAMES[i]]
+        rest_moments.append(moments[idx])
+        W_rest, pval_rest, _, _ = conditional_relevance(
+            data=data,
+            moments=rest_moments,
+            f2_indexes=[len(rest_moments)-1],
+            theta_init=[0, 0],
+        )
+        
+        if pval_basic > significance_level and pval_rest < significance_level:
+            if W_basic is not None:
+                irrelevant_due_to_basics.append((z, W_basic, pval_basic, "🟠"))
+                                             
+        if pval_basic < significance_level and pval_rest > significance_level:
+            irrelevant_due_to_others.append((z, W_rest, pval_rest, "🟡"))
+                                             
+        if pval_basic > significance_level and pval_rest > significance_level:
+            irrelevant_due_to_both.append((z, W_rest, pval_rest, "🔴"))
+                                             
 
-        for r in range(len(others) + 1):
+    report = conditionally_relevant_moments
+    report.extend(irrelevant_due_to_others)
+    report.extend(irrelevant_due_to_basics)
+    report.extend(irrelevant_due_to_both)
 
-            for combo in combinations(others, r):
+    report = pd.DataFrame(report, columns=["moment", "W", "p_value", "conditional_relevance"])
+    report['logW'] = np.log(report['W'])
+    report['group'] = name
+    report = report[['moment', 'W', 'logW', 'p_value', 'group',	'conditional_relevance']]
 
-                block = list(combo) + [moment_i]
-
-                f2_indexes = [MOMENT_NAMES.index(m) for m in block]
-
-                if len(moments) - len(f2_indexes) < 2:
-                    continue
-
-                W, pval, theta, cov = conditional_relevance(
-                    data=data,
-                    moments=moments,
-                    f2_indexes=f2_indexes,
-                    theta_init=[0, 0],
-                )
-
-                if pval < significance_level:
-
-                    if W > best_W:
-                        best_W = W
-                        best_block = block
-
-        if best_block is not None:
-
-            for m in best_block:
-                if m in result_matrix.columns:
-                    result_matrix.loc[moment_i, m] = 1
-
-    return result_matrix
+    return report

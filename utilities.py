@@ -1,7 +1,8 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.patches import Ellipse
+from matplotlib.patches import Ellipse, Patch
+from matplotlib.lines import Line2D
 import seaborn as sns
 from scipy.stats import norm, chi2
 import textwrap
@@ -739,3 +740,182 @@ def implement_CRTA(input: pd.DataFrame, name: str, significance_level: float = 0
     report = report[['moment', 'W', 'logW', 'p_value', 'group',	'conditional_relevance']]
 
     return report
+
+
+def implement_PURTA(input: pd.DataFrame, name: str, significance_level: float =0.05):
+    '''
+    Функция для формирования отчета по PURTA
+    input: pd.DataFrame
+        Входной датасет, в котором обязательно есть колонки [C[t], R[t+1], C[t+1], C_ratio] и поле date является индексом
+    name: str
+        Название
+    significance_level: float
+        Уровень значимости
+    '''
+    assert isinstance(input.index, pd.DatetimeIndex)
+    df = input.copy()
+
+    cols = [col for col in df.columns if col not in ("C[t]", "R[t+1]", "C[t+1]", "C_ratio")]
+    data = {
+        "R[t+1]" : df['R[t+1]'],
+        "C_ratio" : df['C_ratio'],
+        "Const" : np.ones(len(df)),
+    }
+    for col in cols:
+        data[col] = df[col]
+    
+    def make_moment(name):
+        def moment(theta, dp):
+            beta, gamma = theta
+            m = beta * (dp['C_ratio'] ** (-gamma)) * (1 + dp['R[t+1]']) - 1
+            return m * dp[name]
+        return moment
+    MOMENT_NAMES = [col for col in data if col not in ("R[t+1]", "C_ratio")]
+    moments = [make_moment(name) for name in MOMENT_NAMES]
+
+    results = {}
+    for i, moment in tqdm(list(enumerate(MOMENT_NAMES))):
+        W_beta, pval_beta, _, _ = partial_unconditional_relevance(
+            data=data,
+            moments=moments,
+            f2_indexes=[i],
+            a_indexes=[0],
+            theta_init=[0, 0],
+        )
+
+        W_gamma, pval_gamma, _, _ = partial_unconditional_relevance(
+            data=data,
+            moments=moments,
+            f2_indexes=[i],
+            a_indexes=[1],
+            theta_init=[0, 0],
+        )
+
+        W, pval, _, _ = partial_unconditional_relevance(
+            data=data,
+            moments=moments,
+            f2_indexes=[i],
+            a_indexes=[0, 1],
+            theta_init=[0, 0],
+        )
+        
+        results[moment] = {
+            "logW_beta" : np.log(W_beta),
+            "logW_gamma" : np.log(W_gamma),
+            "logW" : np.log(W),
+            "p_value_beta" : pval_beta,
+            "p_value_gamma" : pval_gamma,
+            "p_value" : pval
+        }
+
+    results = pd.DataFrame(results).T
+    results['group'] = name
+    results['relevance_for_beta'] = results['p_value_beta'].apply(lambda x: "🟢" if x < significance_level else "🔴")
+    results['relevance_for_gamma'] = results['p_value_gamma'].apply(lambda x: "🟢" if x < significance_level else "🔴")
+    results['relevance'] = results['p_value'].apply(lambda x: "🟢" if x < significance_level else "🔴")
+    results = results.reset_index().rename(columns={"index" : "moment"}).sort_values(by=["logW_beta", "logW_gamma"], ascending=[False, False])
+
+    return results
+
+
+def plot_moment_relevance_by_beta_and_gamma(df, title=None, significance_level=0.05):
+    sns.set_style("whitegrid")
+    plt.rcParams.update({
+        "font.size": 11,
+        "axes.titlesize": 14,
+        "axes.labelsize": 12,
+        "xtick.labelsize": 10,
+        "ytick.labelsize": 10,
+    })
+
+    plot_df = df.copy()
+
+    plot_df["beta_rel"] = plot_df["p_value_beta"] < significance_level
+    plot_df["gamma_rel"] = plot_df["p_value_gamma"] < significance_level
+    plot_df["joint_rel"] = plot_df["p_value"] < significance_level
+
+    color_map = {
+        True: "#4C72B0",
+        False: "#DD8452"
+    }
+
+    fig, axes = plt.subplots(2, 1, figsize=(14, 14), sharex=True)
+
+    configs = [
+        ("logW_beta", "p_value_beta", "beta_rel", "Relevance for β"),
+        ("logW_gamma", "p_value_gamma", "gamma_rel", "Relevance for γ"),
+    ]
+
+    xmin = min(df["logW_beta"].min(), df["logW_gamma"].min())
+    xmax = max(df["logW_beta"].max(), df["logW_gamma"].max())
+
+    for ax, (logw_col, p_col, rel_col, subtitle) in zip(axes, configs):
+
+        df_sorted = plot_df.sort_values(logw_col, ascending=True)
+        colors = df_sorted[rel_col].map(color_map)
+
+        bars = ax.barh(
+            df_sorted["moment"],
+            df_sorted[logw_col],
+            color=colors,
+            edgecolor="none",
+            alpha=0.95
+        )
+
+        for i, row in enumerate(df_sorted.itertuples()):
+
+            logw = getattr(row, logw_col)
+            p = getattr(row, p_col)
+            joint = row.joint_rel
+
+            ax.text(
+                logw + 0.02 * (xmax - xmin),
+                i,
+                f"{p:.3f}",
+                va="center",
+                fontsize=9,
+                color="#333333"
+            )
+
+            if joint:
+                ax.scatter(
+                    logw,
+                    i,
+                    marker="*",
+                    color="#C44E52",
+                    s=55,
+                    zorder=3
+                )
+
+        ax.set_title(subtitle, loc="left", pad=8)
+
+        ax.grid(axis="x", linestyle="--", alpha=0.3)
+        ax.grid(axis="y", visible=False)
+
+        for spine in ["top", "right"]:
+            ax.spines[spine].set_visible(False)
+
+    axes[-1].set_xlabel("log(W statistic)")
+    axes[0].set_ylabel("Moment")
+    axes[1].set_ylabel("Moment")
+
+    legend_elements = [
+        Patch(facecolor=color_map[True], label="Relevant"),
+        Patch(facecolor=color_map[False], label="Not relevant"),
+        Line2D([0], [0], marker='*', color='w',
+               label='Joint relevance',
+               markerfacecolor='#C44E52',
+               markersize=10)
+    ]
+
+    axes[0].legend(
+        handles=legend_elements,
+        loc="lower right",
+        frameon=False
+    )
+
+    if title:
+        fig.suptitle(title, fontsize=16, y=0.98)
+
+    plt.tight_layout()
+    plt.show()

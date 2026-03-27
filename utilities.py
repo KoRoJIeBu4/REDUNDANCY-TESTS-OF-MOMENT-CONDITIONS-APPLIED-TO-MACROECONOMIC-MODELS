@@ -919,3 +919,213 @@ def plot_moment_relevance_by_beta_and_gamma(df, title=None, significance_level=0
 
     plt.tight_layout()
     plt.show()
+
+
+def implement_PCRTA(input: pd.DataFrame, CRTA_results: pd.DataFrame, name: str, significance_level: float = 0.05):
+    '''
+    Функция для формирования отчета по PCRTA
+    input: pd.DataFrame
+        Входной датасет, в котором обязательно есть колонки [C[t], R[t+1], C[t+1], C_ratio] и поле date является индексом
+    CRTA_results: pd.DataFrame
+        Результат отработки implemet_CRTA(input) для получения условной релевантности для обоих параметров
+    name: str
+        Название
+    significance_level: float
+        Уровень значимости
+    
+    Идея:
+        В отличии от implement_CRTA мы будем рассматривать для каждого (beta, gamma):
+            Вот мы имеем набор инструментов. Для начала мы можем выделить все "базисные инструменты"
+            "Базисные" инструменты (🟢) - это те, для которых тест на conditional_relevance дал результат, что они условно релевантны к всему исходному набору
+            Для "оставшихся" интструментов хочется найти те, через которые они линейно выражаются в терминах якобианов других моментов
+            Возможны такие ситуации (z - текущий инструмент из "остальных", то есть "небазовый"):
+             1) z условно релевантен для базисных и условно НЕрелевантен для остальных (🟡)
+             2) z условно НЕрелевантен для базисных и условно релевантен для остальных (🟠)
+             3) z условно НЕрелевантен для базисных и условно НЕрелевантен для остальных (🔴)
+        После, собираем все в одну табличку
+    '''
+    df = input.copy()
+
+    cols = [c for c in df.columns if c not in ("C[t]", "R[t+1]", "C[t+1]", "C_ratio")]
+
+    data = {
+        "R[t+1]": df["R[t+1]"],
+        "C_ratio": df["C_ratio"],
+        "Const": np.ones(len(df)),
+    }
+
+    for col in cols:
+        data[col] = df[col]
+
+    def make_moment(name):
+        def moment(theta, dp):
+            beta, gamma = theta
+            m = beta * (dp["C_ratio"] ** (-gamma)) * (1 + dp["R[t+1]"]) - 1
+            return m * dp[name]
+        return moment
+
+    MOMENT_NAMES = [c for c in data if c not in ("R[t+1]", "C_ratio")]
+    moments = [make_moment(name) for name in MOMENT_NAMES]
+    
+    conditionally_relevant_moments_beta = []
+    conditionally_irrelevant_moments_beta = []
+    conditionally_relevant_moments_gamma = []
+    conditionally_irrelevant_moments_gamma = []
+
+    for i in tqdm(range(len(moments)), desc="[stage 1]: determine basics"):
+        W_beta, pval_beta, _, _ = partial_conditional_relevance(
+            data=data,
+            moments=moments,
+            f2_indexes=[i],
+            a_indexes=[0],
+            theta_init=[0, 0],
+        )
+
+        W_gamma, pval_gamma, _, _ = partial_conditional_relevance(
+            data=data,
+            moments=moments,
+            f2_indexes=[i],
+            a_indexes=[1],
+            theta_init=[0, 0],
+        )
+
+        if pval_beta <= significance_level:
+            conditionally_relevant_moments_beta.append((MOMENT_NAMES[i], W_beta, pval_beta, "🟢"))
+        else:
+            conditionally_irrelevant_moments_beta.append((MOMENT_NAMES[i], W_beta, pval_beta))
+
+        if pval_gamma <= significance_level:
+            conditionally_relevant_moments_gamma.append((MOMENT_NAMES[i], W_gamma, pval_gamma, "🟢"))
+        else:
+            conditionally_irrelevant_moments_gamma.append((MOMENT_NAMES[i], W_gamma, pval_gamma))
+
+    irrelevant_due_to_basics_beta = []
+    irrelevant_due_to_others_beta = []
+    irrelevant_due_to_both_beta = []
+    irrelevant_due_to_basics_gamma = []
+    irrelevant_due_to_others_gamma = []
+    irrelevant_due_to_both_gamma = []
+    
+    
+
+    for z in tqdm([z[0] for z in conditionally_irrelevant_moments_beta], desc="[stage 2]: determine rest instruments for beta"):
+        idx = MOMENT_NAMES.index(z)
+
+        # Прогоняем z через базисные инструменты
+        basic_moments = [moments[i] for i in range(len(moments)) if MOMENT_NAMES[i] in [z[0] for z in conditionally_relevant_moments_beta]]
+        if len(basic_moments) <= 1:
+            W_basic, pval_basic = None, float("inf")
+        else:
+            basic_moments.append(moments[idx])
+            W_basic, pval_basic, _, _ = partial_conditional_relevance(
+                data=data,
+                moments=basic_moments,
+                f2_indexes=[len(basic_moments)-1],
+                a_indexes=[0],
+                theta_init=[0, 0],
+            )
+
+        # Прогоняем z через оставшиеся инструменты
+        rest_moments = [moments[i] for i in range(len(moments)) if MOMENT_NAMES[i] in [z[0] for z in conditionally_irrelevant_moments_beta] and z != MOMENT_NAMES[i]]
+        rest_moments.append(moments[idx])
+        W_rest, pval_rest, _, _ = partial_conditional_relevance(
+            data=data,
+            moments=rest_moments,
+            f2_indexes=[len(rest_moments)-1],
+            a_indexes=[0],
+            theta_init=[0, 0],
+        )
+        
+        if pval_basic > significance_level and pval_rest < significance_level:
+            if W_basic is not None:
+                irrelevant_due_to_basics_beta.append((z, W_basic, pval_basic, "🟠"))
+                                             
+        if pval_basic < significance_level and pval_rest > significance_level:
+            irrelevant_due_to_others_beta.append((z, W_rest, pval_rest, "🟡"))
+                                             
+        if pval_basic > significance_level and pval_rest > significance_level:
+            irrelevant_due_to_both_beta.append((z, W_rest, pval_rest, "🔴"))
+
+    
+    for z in tqdm([z[0] for z in conditionally_irrelevant_moments_gamma], desc="[stage 3]: determine rest instruments for gamma"):
+        idx = MOMENT_NAMES.index(z)
+
+        # Прогоняем z через базисные инструменты
+        basic_moments = [moments[i] for i in range(len(moments)) if MOMENT_NAMES[i] in [z[0] for z in conditionally_relevant_moments_gamma]]
+        if len(basic_moments) <= 1:
+            W_basic, pval_basic = None, float("inf")
+        else:
+            basic_moments.append(moments[idx])
+            W_basic, pval_basic, _, _ = partial_conditional_relevance(
+                data=data,
+                moments=basic_moments,
+                f2_indexes=[len(basic_moments)-1],
+                a_indexes=[1],
+                theta_init=[0, 0],
+            )
+
+        # Прогоняем z через оставшиеся инструменты
+        rest_moments = [moments[i] for i in range(len(moments)) if MOMENT_NAMES[i] in [z[0] for z in conditionally_irrelevant_moments_gamma] and z != MOMENT_NAMES[i]]
+        rest_moments.append(moments[idx])
+        W_rest, pval_rest, _, _ = partial_conditional_relevance(
+            data=data,
+            moments=rest_moments,
+            f2_indexes=[len(rest_moments)-1],
+            a_indexes=[1],
+            theta_init=[0, 0],
+        )
+        
+        if pval_basic > significance_level and pval_rest < significance_level:
+            if W_basic is not None:
+                irrelevant_due_to_basics_gamma.append((z, W_basic, pval_basic, "🟠"))
+                                             
+        if pval_basic < significance_level and pval_rest > significance_level:
+            irrelevant_due_to_others_gamma.append((z, W_rest, pval_rest, "🟡"))
+                                             
+        if pval_basic > significance_level and pval_rest > significance_level:
+            irrelevant_due_to_both_gamma.append((z, W_rest, pval_rest, "🔴"))
+                                             
+
+    report_beta = conditionally_relevant_moments_beta
+    report_beta.extend(irrelevant_due_to_others_beta)
+    report_beta.extend(irrelevant_due_to_basics_beta)
+    report_beta.extend(irrelevant_due_to_both_beta)
+    report_gamma = conditionally_relevant_moments_gamma
+    report_gamma.extend(irrelevant_due_to_others_gamma)
+    report_gamma.extend(irrelevant_due_to_basics_gamma)
+    report_gamma.extend(irrelevant_due_to_both_gamma)
+
+    report_beta = pd.DataFrame(report_beta, columns=["moment", "W_beta", "p_value_for_beta", "conditional_relevance_for_beta"])
+    report_beta['logW_beta'] = np.log(report_beta['W_beta'])
+    report_beta['group'] = name
+    report_beta = report_beta[['moment', 'logW_beta', 'p_value_for_beta', 'group', 'conditional_relevance_for_beta']]
+    report_gamma = pd.DataFrame(report_gamma, columns=["moment", "W_gamma", "p_value_for_gamma", "conditional_relevance_for_gamma"])
+    report_gamma['logW_gamma'] = np.log(report_gamma['W_gamma'])
+    report_gamma = report_gamma[['moment', 'logW_gamma', 'p_value_for_gamma', 'conditional_relevance_for_gamma']]
+
+    report = pd.merge(
+        left=report_beta,
+        right=report_gamma,
+        how='inner',
+        on='moment'
+    )
+
+    report = report[[
+        'moment',
+        'logW_beta',
+        'logW_gamma',
+        'p_value_for_beta',
+        'p_value_for_gamma',
+        'conditional_relevance_for_beta',
+        'conditional_relevance_for_gamma'
+    ]]
+
+    report = report.merge(
+        right=CRTA_results[['moment', 'conditional_relevance']],
+        on='moment',
+        how='left',
+    )
+
+    assert len(CRTA_results) == len(report), "Какой-то инструмент выпал из набора"
+
+    return report

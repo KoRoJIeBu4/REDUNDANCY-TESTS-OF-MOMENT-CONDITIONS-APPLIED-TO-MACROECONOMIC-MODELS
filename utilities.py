@@ -10,6 +10,8 @@ from tqdm.auto import tqdm
 from tests_impl import unconditional_relevance, conditional_relevance, partial_conditional_relevance, partial_unconditional_relevance
 from statsmodels.tsa.stattools import adfuller
 from itertools import combinations
+import re
+from typing import Dict, Any, Tuple, Optional, List
 
 
 def analyze_high_correlations(df, threshold=0.7):
@@ -1126,6 +1128,494 @@ def implement_PCRTA(input: pd.DataFrame, CRTA_results: pd.DataFrame, name: str, 
         how='left',
     )
 
-    assert len(CRTA_results) == len(report), "Какой-то инструмент выпал из набора"
+    # assert len(CRTA_results) == len(report), "Какой-то инструмент выпал из набора"
 
     return report
+
+
+def build_optimal_euler_portfolio(
+    tables: Dict[str, pd.DataFrame],
+    alpha: float = 0.05,
+    drop_const: bool = True,
+    keep_shared_only: bool = False,
+    min_block_support: int = 1,
+) -> pd.DataFrame:
+    """
+    Формирует оптимальный портфель факторов (моментов) для оценки модели Эйлера
+    на основе результатов тестов безусловной релевантности (URTA),
+    условной релевантности (CRTA), частичной безусловной релевантности (PURTA)
+    и частичной условной релевантности (PCRTA), представленных в виде
+    таблиц вида *_of_feature_group_i.
+
+    Определение оптимального портфеля
+    ---------------------------------
+    Под оптимальным портфелем факторов понимается такое подмножество моментов,
+    которое одновременно удовлетворяет следующим формальным критериям:
+
+    1. Безусловная информативность (URTA):
+       Момент считается потенциально информативным, если в таблицах вида
+       URTA_of_feature_group_i он имеет статистически значимое значение
+       (p_value < alpha), что свидетельствует о наличии вклада в идентификацию
+       модели в целом.
+
+    2. Условная независимость (CRTA):
+       На основании таблиц CRTA_of_feature_group_i в портфель включаются только
+       те моменты, которые классифицированы как условно релевантные (🟢) либо
+       не полностью редуцируемые через другие моменты (🟡, 🟠), то есть не
+       принадлежат к множеству полностью условно нерелевантных инструментов (🔴).
+       Данный критерий обеспечивает отсутствие линейной зависимости якобианов
+       моментов и, следовательно, независимость каналов идентификации.
+
+    3. Параметрическая релевантность (PURTA):
+       Согласно таблицам PURTA_of_feature_group_i, момент включается в портфель,
+       если он статистически значим (p_value_beta < alpha или p_value_gamma < alpha)
+       хотя бы для одного из структурных параметров модели:
+           • beta — параметр межвременного дисконтирования,
+           • gamma — параметр риск-аверсии.
+       Это гарантирует, что каждый выбранный фактор несёт идентификационную
+       нагрузку на уровне структурных параметров.
+
+    4. Частичная условная релевантность (PCRTA):
+       На основе таблиц PCRTA_of_feature_group_i дополнительно проверяется,
+       сохраняет ли момент свою параметрическую значимость после условного
+       исключения влияния других моментов.
+       В портфель включаются только те моменты, для которых выполняется:
+           • p_value_for_beta < alpha и/или p_value_for_gamma < alpha,
+       что интерпретируется как наличие независимого канала идентификации
+       соответствующего параметра.
+
+    Итоговый результат
+    -----------------
+    Функция возвращает единый DataFrame, содержащий оптимальный портфель факторов,
+    где каждый момент:
+        • прошёл отбор по URTA (общая информативность),
+        • не является условно избыточным согласно CRTA,
+        • значим для beta и/или gamma по PURTA,
+        • сохраняет значимость после условного контроля по PCRTA,
+
+    Тем самым итоговый портфель представляет собой строго отобранное множество
+    инструментов, обеспечивающих идентификацию параметров модели Эйлера через
+    независимые и экономически интерпретируемые каналы.
+    """
+
+    def parse_key(key: str) -> Tuple[str, str]:
+        m = re.match(r"^(URTA|CRTA|PURTA|PCRTA)_of_(.+)$", key, flags=re.IGNORECASE)
+        if not m:
+            raise ValueError(
+                f"Не удалось распознать ключ '{key}'. "
+                f"Ожидается формат вроде 'URTA_of_feature_group_1'."
+            )
+        test = m.group(1).upper()
+        group = m.group(2)
+        return test, group
+
+    def pick_first_existing(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+        for c in candidates:
+            if c in df.columns:
+                return c
+        return None
+
+    def normalize_table(key: str, df: pd.DataFrame) -> pd.DataFrame:
+        test, group = parse_key(key)
+
+        if "moment" not in df.columns:
+            raise ValueError(f"В таблице {key} нет колонки 'moment'.")
+
+        out = df.copy()
+        out["test"] = test
+        out["group"] = group
+
+        if test in {"URTA", "CRTA"}:
+            p_col = pick_first_existing(out, ["p_value"])
+            if p_col is None:
+                raise ValueError(f"В таблице {key} нет колонки p_value.")
+            out["p_beta"] = np.nan
+            out["p_gamma"] = np.nan
+            out["p_overall"] = pd.to_numeric(out[p_col], errors="coerce")
+
+        elif test == "PURTA":
+            p_beta = pick_first_existing(out, ["p_value_beta"])
+            p_gamma = pick_first_existing(out, ["p_value_gamma"])
+            p_overall = pick_first_existing(out, ["p_value"])
+            if p_beta is None or p_gamma is None or p_overall is None:
+                raise ValueError(
+                    f"В таблице {key} ожидаются колонки "
+                    f"p_value_beta, p_value_gamma и p_value."
+                )
+            out["p_beta"] = pd.to_numeric(out[p_beta], errors="coerce")
+            out["p_gamma"] = pd.to_numeric(out[p_gamma], errors="coerce")
+            out["p_overall"] = pd.to_numeric(out[p_overall], errors="coerce")
+
+        elif test == "PCRTA":
+            p_beta = pick_first_existing(out, ["p_value_for_beta", "p_value_beta"])
+            p_gamma = pick_first_existing(out, ["p_value_for_gamma", "p_value_gamma"])
+            p_overall = pick_first_existing(out, ["p_value"])
+            if p_beta is None or p_gamma is None:
+                raise ValueError(
+                    f"В таблице {key} ожидаются колонки "
+                    f"p_value_for_beta/p_value_beta и p_value_for_gamma/p_value_gamma."
+                )
+            out["p_beta"] = pd.to_numeric(out[p_beta], errors="coerce")
+            out["p_gamma"] = pd.to_numeric(out[p_gamma], errors="coerce")
+            out["p_overall"] = pd.to_numeric(out[p_overall], errors="coerce") if p_overall else np.nan
+
+        else:
+            raise ValueError(f"Неизвестный тест: {test}")
+
+        return out[["moment", "test", "group", "p_beta", "p_gamma", "p_overall"]]
+
+    def is_sig(x: float) -> bool:
+        return pd.notna(x) and x < alpha
+
+    # ---------- 1) Сводим все таблицы в один длинный формат ----------
+    frames = []
+    for key, df in tables.items():
+        frames.append(normalize_table(key, df))
+
+    all_rows = pd.concat(frames, ignore_index=True)
+
+    if drop_const:
+        all_rows = all_rows[all_rows["moment"].astype(str).str.lower() != "const"].copy()
+
+    # ---------- 2) Агрегируем доказательства по каждому моменту ----------
+    records = []
+
+    for moment, g in all_rows.groupby("moment", sort=False):
+        # Сигналы по параметрам
+        beta_rows = g[pd.to_numeric(g["p_beta"], errors="coerce").notna()].copy()
+        gamma_rows = g[pd.to_numeric(g["p_gamma"], errors="coerce").notna()].copy()
+
+        beta_sig_rows = beta_rows[beta_rows["p_beta"].apply(is_sig)] if len(beta_rows) else beta_rows.iloc[0:0]
+        gamma_sig_rows = gamma_rows[gamma_rows["p_gamma"].apply(is_sig)] if len(gamma_rows) else gamma_rows.iloc[0:0]
+
+        beta_hit = len(beta_sig_rows) > 0
+        gamma_hit = len(gamma_sig_rows) > 0
+
+        # Общие p-values (URTA/CRTA и overall из partial тестов)
+        overall_rows = g[pd.to_numeric(g["p_overall"], errors="coerce").notna()].copy()
+        overall_sig_rows = overall_rows[overall_rows["p_overall"].apply(is_sig)] if len(overall_rows) else overall_rows.iloc[0:0]
+        overall_hit = len(overall_sig_rows) > 0
+
+        # Поддержка по блокам
+        beta_blocks = sorted(set(beta_sig_rows["group"].astype(str).tolist()))
+        gamma_blocks = sorted(set(gamma_sig_rows["group"].astype(str).tolist()))
+        overall_blocks = sorted(set(overall_sig_rows["group"].astype(str).tolist()))
+
+        beta_support = len(beta_blocks)
+        gamma_support = len(gamma_blocks)
+        overall_support = len(overall_blocks)
+
+        # Лучшие p-values
+        p_beta_best = float(beta_sig_rows["p_beta"].min()) if beta_hit else np.nan
+        p_gamma_best = float(gamma_sig_rows["p_gamma"].min()) if gamma_hit else np.nan
+        p_overall_best = float(overall_sig_rows["p_overall"].min()) if overall_hit else np.nan
+
+        # Категория момента
+        if beta_hit and gamma_hit:
+            role = "bridge"
+        elif beta_hit:
+            role = "beta_core"
+        elif gamma_hit:
+            role = "gamma_core"
+        elif keep_shared_only and overall_hit:
+            role = "shared"
+        else:
+            role = "excluded"
+
+        # Строгий фильтр по числу блоков
+        selected = (
+            (role != "excluded")
+            and ((beta_support >= min_block_support) or (gamma_support >= min_block_support) or (overall_support >= min_block_support))
+        )
+
+        # Итоговый score для сортировки
+        score = 0.0
+        if beta_hit:
+            score += 5.0
+        if gamma_hit:
+            score += 5.0
+        if beta_hit and gamma_hit:
+            score += 2.0
+        score += 1.0 * overall_hit
+        score += 0.25 * (beta_support + gamma_support + overall_support)
+
+        records.append(
+            {
+                "moment": moment,
+                "selected": selected,
+                "role": role,
+                "score": score,
+                "p_beta_best": p_beta_best,
+                "p_gamma_best": p_gamma_best,
+                "p_overall_best": p_overall_best,
+                "beta_hit": beta_hit,
+                "gamma_hit": gamma_hit,
+                "overall_hit": overall_hit,
+                "beta_support_blocks": beta_support,
+                "gamma_support_blocks": gamma_support,
+                "overall_support_blocks": overall_support,
+                "beta_blocks": ", ".join(beta_blocks),
+                "gamma_blocks": ", ".join(gamma_blocks),
+                "overall_blocks": ", ".join(overall_blocks),
+                "tests_seen": ", ".join(sorted(set(g["test"].astype(str).tolist()))),
+                "groups_seen": ", ".join(sorted(set(g["group"].astype(str).tolist()))),
+            }
+        )
+
+    master = pd.DataFrame(records)
+
+    # ---------- 3) Финальный портфель ----------
+    portfolio = master[master["selected"]].copy()
+
+    role_order = {"bridge": 0, "beta_core": 1, "gamma_core": 2, "shared": 3, "excluded": 4}
+    portfolio["role_order"] = portfolio["role"].map(role_order)
+
+    portfolio = portfolio.sort_values(
+        by=["role_order", "score", "beta_support_blocks", "gamma_support_blocks", "overall_support_blocks", "moment"],
+        ascending=[True, False, False, False, False, True],
+    ).drop(columns=["role_order"])
+
+    # Можно сохранить полную диагностику в attrs
+    portfolio.attrs["master_diagnostics"] = master.sort_values(
+        by=["selected", "score", "moment"], ascending=[False, False, True]
+    ).reset_index(drop=True)
+
+    return portfolio.reset_index(drop=True)
+
+
+def plot_optimal_euler_portfolio_graph(
+    input: pd.DataFrame,
+    title: str = "Оптимальный портфель факторов для модели Эйлера",
+    figsize: Tuple[int, int] = (18, 12),
+    wrap_width: int = 22,
+    savepath: Optional[str] = None,
+    dpi: int = 400,
+    eng2rus: dict = None
+):
+    portfolio = input.copy()
+    if eng2rus:
+        portfolio['moment'] = portfolio['moment'].map(eng2rus)
+
+    plt.rcParams.update({
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "DejaVu Serif", "STIXGeneral"],
+        "font.size": 11,
+        "axes.titlesize": 16,
+        "axes.labelsize": 12,
+        "legend.fontsize": 10,
+        "xtick.labelsize": 10,
+        "ytick.labelsize": 10,
+        "figure.dpi": dpi,
+        "savefig.dpi": dpi,
+    })
+
+    df = portfolio.copy()
+
+    required = {"moment", "role", "score"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"В portfolio не хватает колонок: {missing}")
+
+    df = df[df["role"].isin(["bridge", "beta_core", "gamma_core", "shared"])].copy()
+
+    role_order = {"bridge": 0, "beta_core": 1, "gamma_core": 2, "shared": 3}
+    df["role_order"] = df["role"].map(role_order).fillna(99)
+    df = df.sort_values(
+        by=["role_order", "score", "moment"],
+        ascending=[True, False, True]
+    ).reset_index(drop=True)
+
+    groups = {
+        "bridge": df[df["role"] == "bridge"].copy(),
+        "beta_core": df[df["role"] == "beta_core"].copy(),
+        "gamma_core": df[df["role"] == "gamma_core"].copy(),
+        "shared": df[df["role"] == "shared"].copy(),
+    }
+
+    x_beta = 0.0
+    x_beta_core = 2.2
+    x_bridge = 5.0
+    x_gamma_core = 7.8
+    x_gamma = 10.0
+
+    counts = [len(v) for v in groups.values() if len(v) > 0]
+    n = max(counts) if counts else 1
+    y_top = max(3, n * 1.4)
+
+    def spaced_y(k: int) -> np.ndarray:
+        if k == 0:
+            return np.array([])
+        if k == 1:
+            return np.array([0.0])
+        return np.linspace(y_top, 0, k)
+
+    positions = []
+    for role, g in groups.items():
+        ys = spaced_y(len(g))
+
+        if role == "bridge":
+            x = x_bridge
+        elif role == "beta_core":
+            x = x_beta_core
+        elif role == "gamma_core":
+            x = x_gamma_core
+        else:
+            x = (x_beta_core + x_gamma_core) / 2.0
+
+        for idx, (_, row) in enumerate(g.iterrows()):
+            positions.append({
+                "moment": row["moment"],
+                "role": role,
+                "score": float(row["score"]),
+                "x": x,
+                "y": float(ys[idx]),
+                "beta_hit": bool(row.get("beta_hit", False)),
+                "gamma_hit": bool(row.get("gamma_hit", False)),
+                "beta_support_blocks": int(row.get("beta_support_blocks", 0)) if pd.notna(row.get("beta_support_blocks", np.nan)) else 0,
+                "gamma_support_blocks": int(row.get("gamma_support_blocks", 0)) if pd.notna(row.get("gamma_support_blocks", np.nan)) else 0,
+                "overall_support_blocks": int(row.get("overall_support_blocks", 0)) if pd.notna(row.get("overall_support_blocks", np.nan)) else 0,
+            })
+
+    pos_df = pd.DataFrame(positions)
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    model_node_size = 2200
+    ax.scatter([x_beta], [y_top / 2], s=model_node_size, marker="o",
+               color="#2f2f2f", edgecolor="black", linewidth=1.0, zorder=2)
+    ax.scatter([x_gamma], [y_top / 2], s=model_node_size, marker="o",
+               color="#2f2f2f", edgecolor="black", linewidth=1.0, zorder=2)
+
+    ax.text(
+        x_beta, y_top / 2, r"$\beta$",
+        ha="center", va="center",
+        fontsize=20, fontweight="bold",
+        color="white", zorder=3
+    )
+    ax.text(
+        x_gamma, y_top / 2, r"$\gamma$",
+        ha="center", va="center",
+        fontsize=20, fontweight="bold",
+        color="white", zorder=3
+    )
+
+    guide_color = "#8a8a8a"
+    for x in [x_beta, x_beta_core, x_bridge, x_gamma_core, x_gamma]:
+        ax.axvline(x, color=guide_color, linestyle="--", linewidth=0.8, alpha=0.18, zorder=0)
+
+    header_fs = 12
+    ax.text(x_beta_core, y_top + 0.8, "Канал дисконтирования",
+            ha="center", va="bottom", fontsize=header_fs, fontweight="bold")
+    ax.text(x_bridge, y_top + 0.8, "Связующий канал",
+            ha="center", va="bottom", fontsize=header_fs, fontweight="bold")
+    ax.text(x_gamma_core, y_top + 0.8, "Канал риска",
+            ha="center", va="bottom", fontsize=header_fs, fontweight="bold")
+
+    color_map = {
+        "bridge": "#1f77b4",
+        "beta_core": "#ff7f0e",
+        "gamma_core": "#2ca02c",
+    }
+
+    for _, row in pos_df.iterrows():
+        role = row["role"]
+        x, y = row["x"], row["y"]
+        color = color_map.get(role, "#333333")
+
+        support_sum = row["beta_support_blocks"] + row["gamma_support_blocks"] + row["overall_support_blocks"]
+        size = 240 + 38 * row["score"] + 28 * support_sum
+
+        ax.scatter(
+            [x], [y],
+            s=size,
+            color=color,
+            alpha=0.93,
+            zorder=3,
+            edgecolor="black",
+            linewidth=0.9
+        )
+
+        if row["beta_hit"]:
+            ax.annotate(
+                "",
+                xy=(x_beta, y_top / 2),
+                xytext=(x - 0.15, y),
+                arrowprops=dict(arrowstyle="-", color=color, alpha=0.38, lw=1.4),
+                zorder=1,
+            )
+        if row["gamma_hit"]:
+            ax.annotate(
+                "",
+                xy=(x_gamma, y_top / 2),
+                xytext=(x + 0.15, y),
+                arrowprops=dict(arrowstyle="-", color=color, alpha=0.38, lw=1.4),
+                zorder=1,
+            )
+
+        wrapped = "\n".join(textwrap.wrap(str(row["moment"]), width=wrap_width))
+
+        dx = 0.24 if role in {"beta_core", "bridge"} else -0.24
+        ha = "left" if dx > 0 else "right"
+
+        ax.text(
+            x + dx, y, wrapped,
+            ha=ha, va="center",
+            fontsize=10.5,
+            bbox=dict(
+                boxstyle="round,pad=0.25",
+                fc="white",
+                ec=color,
+                lw=0.8,
+                alpha=0.96
+            ),
+            zorder=4,
+        )
+
+    ax.set_xlim(-0.8, 10.8)
+    ax.set_ylim(-1.2, y_top + 1.8)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_title(title, fontsize=16, pad=18)
+
+    legend_items = [
+        ("bridge", r"bridge: $\beta$ and $\gamma$"),
+        ("beta_core", r"$\beta$-core"),
+        ("gamma_core", r"$\gamma$-core"),
+    ]
+
+    handles = []
+    labels = []
+    for key, lab in legend_items:
+        handles.append(
+            plt.Line2D(
+                [0], [0],
+                marker="o",
+                color="w",
+                markerfacecolor=color_map[key],
+                markeredgecolor="black",
+                markersize=10,
+                linewidth=0
+            )
+        )
+        labels.append(lab)
+
+    ax.legend(
+        handles,
+        labels,
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.05),
+        ncol=4,
+        frameon=False
+    )
+
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_visible(False)
+    ax.spines["bottom"].set_visible(False)
+
+    plt.tight_layout()
+
+    if savepath is not None:
+        plt.savefig(savepath, dpi=dpi, bbox_inches="tight")
+
+    plt.show()

@@ -3,7 +3,7 @@ import autograd.numpy as anp
 from autograd import grad, hessian, jacobian
 from scipy.optimize import minimize
 from scipy.stats import chi2
-from typing import Callable, Tuple, List, Dict
+from typing import Callable, Tuple, List, Dict, Optional
 
 
 def vec(A):
@@ -52,8 +52,9 @@ def unconditional_relevance(
     moments: List[Callable],
     f2_indexes: List[int],
     theta_init: np.ndarray,
-    verbose: bool = False
-) -> Tuple[float, float, np.array, np.ndarray]:
+    verbose: bool = False,
+    j_test: bool = False,
+) -> Tuple[float, float, np.array, np.ndarray, Optional[Tuple[float, float]]]:
     '''
     Процедура теста на безусловную релевантность моментов f2. Формально, проверяется равенство якобиана
     моментов G2 нулю. Если G2 = 0 статистически значимо, то в решении задачи оптимизации пул моментов
@@ -72,11 +73,13 @@ def unconditional_relevance(
         Начальные значения параметров
     verbose: bool
         Показывать отладку работы теста (по-умолчанию отключено)
+    j_test: bool
+        Возвращать ли статистику J-теста. Если да, то возаращется кортеж (статистика, pvalue)
 
     Return:
     ----------
-    tuple[float, float, np.array, np.ndarray]
-        Результаты теста: значение статистики, p-value, оценку theta, ковариационная матрица theta
+    tuple[float, float, np.array, np.ndarray, Optional[Tuple[float, float]]]
+        Результаты теста: значение статистики, p-value, оценку theta, ковариационная матрица theta, J-тест (опционально)
     '''
     def vprint(*args, **kwargs):
         '''
@@ -220,7 +223,12 @@ def unconditional_relevance(
     W = float(T * (g2.T @ np.linalg.pinv(Sigma_g2) @ g2))
     p_value = 1.0 - chi2.cdf(W, df=m2 * k)
     vprint("[TEST DONE]")
+    
+    if j_test:
+        j_stat = T * f_mat.mean(axis=0, keepdims=True) @ Oinv @ f_mat.mean(axis=0, keepdims=True).T
+        j_pvalue = 1.0 - chi2.cdf(j_stat, df=m-k)
 
+        return W, float(p_value), np.array(theta_hat), cov_theta, (j_stat, j_pvalue)
     return W, float(p_value), np.array(theta_hat), cov_theta
 
 

@@ -93,7 +93,12 @@ def plot_high_correlations(high_corr_df, threshold=0.7, top_n=20):
     plt.show()
 
 
-def plot_correlation_heatmap_with_threshold(corr_matrix, threshold=0.7):
+def plot_correlation_heatmap_with_threshold(
+    corr_matrix, 
+    threshold=0.7, 
+    title=None,
+    savename=None,
+):
     """
     Тепловая карта с выделением сильных корреляций
     """
@@ -103,7 +108,7 @@ def plot_correlation_heatmap_with_threshold(corr_matrix, threshold=0.7):
     
     sns.heatmap(corr_matrix, 
                 mask=mask,
-                annot=True, 
+                # annot=True, 
                 fmt='.2f', 
                 cmap='RdBu_r',
                 center=0,
@@ -112,9 +117,13 @@ def plot_correlation_heatmap_with_threshold(corr_matrix, threshold=0.7):
                 square=True,
                 linewidths=0.5,
                 cbar_kws={"shrink": 0.8})
-    
-    plt.title(f'Корреляционная матрица (показаны |r| > {threshold})', fontsize=14)
+    if title is None:
+        plt.title(f'Корреляционная матрица (показаны |r| > {threshold})', fontsize=14)
+    else:
+        plt.title(title, fontsize=14)
     plt.tight_layout()
+    if savename:
+        plt.savefig(f"data/images/{savename}.png", dpi=400)
     plt.show()
 
 
@@ -213,9 +222,11 @@ def select_features_by_correlation_threshold(df, threshold=0.7):
 def plot_theta_estimates(
     theta_hat: np.ndarray,
     cov_theta: np.ndarray,
+    savename=None,
+    title=None,
     alpha: float = 0.05,
     param_names: list = None,
-    figsize: tuple = (12, 6)
+    figsize: tuple = (12, 6),
 ):
     """
     Визуализация оценок параметров с нормальной аппроксимацией и доверительными интервалами.
@@ -282,12 +293,20 @@ def plot_theta_estimates(
     for j in range(k, len(axes)):
         fig.delaxes(axes[j])
 
-    fig.suptitle(
-        f"Parameter Estimates with {(1-alpha)*100:.0f}% Confidence Intervals",
-        fontsize=14
-    )
+    if title is None:
+        fig.suptitle(
+            f"Parameter Estimates with {(1-alpha)*100:.0f}% Confidence Intervals",
+            fontsize=14
+        )
+    else:
+        fig.suptitle(
+            title,
+            fontsize=14
+        )
 
     plt.tight_layout()
+    if savename:
+        plt.savefig(f"data/images/{savename}.png", dpi=400)
     plt.show()
 
 
@@ -327,12 +346,17 @@ def wald_test_pairwise(thetas, covs, names=None):
     return pd.DataFrame(results)
 
 
-def plot_gmm_estimates(thetas, covs, names=None, conf=0.95):
+def plot_gmm_estimates(thetas, covs, names=None, conf=0.95, savename=None):
+    import textwrap
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Ellipse
+    from scipy.stats import chi2
 
     n = len(thetas)
 
     if names is None:
-        names = [f"model_{i+1}" for i in range(n)]
+        names = [f"модель_{i+1}" for i in range(n)]
 
     names_wrapped = ["\n".join(textwrap.wrap(nm, 22)) for nm in names]
 
@@ -352,49 +376,45 @@ def plot_gmm_estimates(thetas, covs, names=None, conf=0.95):
     plt.figure(figsize=(13,7))
 
     for i in range(n):
-
         low = betas[i] - z*beta_se[i]
         high = betas[i] + z*beta_se[i]
-
         c = colors[i % len(colors)]
 
         plt.vlines(x[i], low, high, colors=c, linewidth=2)
-
         plt.hlines(low, x[i]-0.25, x[i]+0.25, colors=c, linestyles="dashed")
         plt.hlines(high, x[i]-0.25, x[i]+0.25, colors=c, linestyles="dashed")
-
         plt.scatter(x[i], betas[i], color=c, s=90, zorder=3)
 
     plt.xticks(x, names_wrapped)
-    plt.ylabel("beta")
-    plt.title(f"Beta estimates ({int(conf*100)}% CI)")
+    plt.ylabel("$\\beta$")
+    plt.title(f"Оценки параметра $\\beta$ ({int(conf*100)}% доверительный интервал)")
     plt.grid(alpha=0.3)
 
     plt.tight_layout()
+    if savename:
+        plt.savefig(f"data/images/{savename}_beta.png", dpi=400)
     plt.show()
 
     plt.figure(figsize=(13,7))
 
     for i in range(n):
-
         low = gammas[i] - z*gamma_se[i]
         high = gammas[i] + z*gamma_se[i]
-
         c = colors[i % len(colors)]
 
         plt.vlines(x[i], low, high, colors=c, linewidth=2)
-
         plt.hlines(low, x[i]-0.25, x[i]+0.25, colors=c, linestyles="dashed")
         plt.hlines(high, x[i]-0.25, x[i]+0.25, colors=c, linestyles="dashed")
-
         plt.scatter(x[i], gammas[i], color=c, s=90, zorder=3)
 
     plt.xticks(x, names_wrapped)
-    plt.ylabel("gamma")
-    plt.title(f"Gamma estimates ({int(conf*100)}% CI)")
+    plt.ylabel("$\\gamma$")
+    plt.title(f"Оценки параметра $\\gamma$ ({int(conf*100)}% доверительный интервал)")
     plt.grid(alpha=0.3)
 
     plt.tight_layout()
+    if savename:
+        plt.savefig(f"data/images/{savename}_gamma.png", dpi=400)
     plt.show()
 
     plt.figure(figsize=(12,8))
@@ -402,13 +422,9 @@ def plot_gmm_estimates(thetas, covs, names=None, conf=0.95):
     chi_val = chi2.ppf(conf,2)
 
     for i,(theta,cov,name) in enumerate(zip(thetas,covs,names)):
-
         vals, vecs = np.linalg.eigh(cov)
-
         angle = np.degrees(np.arctan2(*vecs[:,0][::-1]))
-
         width,height = 2*np.sqrt(vals*chi_val)
-
         c = colors[i % len(colors)]
 
         ell = Ellipse(
@@ -421,7 +437,6 @@ def plot_gmm_estimates(thetas, covs, names=None, conf=0.95):
         )
 
         plt.gca().add_patch(ell)
-
         plt.scatter(theta[0],theta[1],color=c,s=90)
 
         plt.annotate(
@@ -431,13 +446,15 @@ def plot_gmm_estimates(thetas, covs, names=None, conf=0.95):
             textcoords="offset points"
         )
 
-    plt.xlabel("beta")
-    plt.ylabel("gamma")
-    plt.title(f"Joint confidence region ({int(conf*100)}%)")
+    plt.xlabel("$\\beta$")
+    plt.ylabel("$\\gamma$")
+    plt.title(f"Совместная доверительная область ({int(conf*100)}%)")
 
     plt.grid(alpha=0.3)
 
     plt.tight_layout()
+    if savename:
+        plt.savefig(f"data/images/{savename}_joint.png", dpi=400)
     plt.show()
 
 
@@ -584,7 +601,7 @@ def implement_URTA(input: pd.DataFrame, name: str, significance_level: float =0.
     return results
 
 
-def plot_moment_relevance(df, title=None):
+def plot_moment_relevance(df, title=None, savename=None):
 
     df = df.sort_values("logW", ascending=True)
 
@@ -611,8 +628,8 @@ def plot_moment_relevance(df, title=None):
             fontsize=9
         )
 
-    ax.set_xlabel("log(W statistic)")
-    ax.set_ylabel("Moment condition")
+    ax.set_xlabel("log(W)")
+    ax.set_ylabel("Инструмент")
 
     if title is not None:
         ax.set_title(title)
@@ -620,8 +637,8 @@ def plot_moment_relevance(df, title=None):
     from matplotlib.patches import Patch
 
     legend_elements = [
-        Patch(facecolor="#2C7BB6", label="Relevant"),
-        Patch(facecolor="#D7191C", label="Not relevant")
+        Patch(facecolor="#2C7BB6", label="Безусловно релевантный"),
+        Patch(facecolor="#D7191C", label="Безусловно нерелевантный")
     ]
 
     ax.legend(handles=legend_elements)
@@ -629,6 +646,8 @@ def plot_moment_relevance(df, title=None):
     sns.despine()
 
     plt.tight_layout()
+    if savename:
+        plt.savefig(f"data/images/{savename}.png", dpi=400)
     plt.show()
 
 
@@ -820,7 +839,7 @@ def implement_PURTA(input: pd.DataFrame, name: str, significance_level: float =0
     return results
 
 
-def plot_moment_relevance_by_beta_and_gamma(df, title=None, significance_level=0.05):
+def plot_moment_relevance_by_beta_and_gamma(df, title=None, significance_level=0.05, savename=None):
     sns.set_style("whitegrid")
     plt.rcParams.update({
         "font.size": 11,
@@ -844,8 +863,8 @@ def plot_moment_relevance_by_beta_and_gamma(df, title=None, significance_level=0
     fig, axes = plt.subplots(2, 1, figsize=(14, 14), sharex=True)
 
     configs = [
-        ("logW_beta", "p_value_beta", "beta_rel", "Relevance for β"),
-        ("logW_gamma", "p_value_gamma", "gamma_rel", "Relevance for γ"),
+        ("logW_beta", "p_value_beta", "beta_rel", "Частичная релевантность для $\\beta$"),
+        ("logW_gamma", "p_value_gamma", "gamma_rel", "Частичная релевантность для $\\gamma$"),
     ]
 
     xmin = min(df["logW_beta"].min(), df["logW_gamma"].min())
@@ -897,15 +916,15 @@ def plot_moment_relevance_by_beta_and_gamma(df, title=None, significance_level=0
         for spine in ["top", "right"]:
             ax.spines[spine].set_visible(False)
 
-    axes[-1].set_xlabel("log(W statistic)")
-    axes[0].set_ylabel("Moment")
-    axes[1].set_ylabel("Moment")
+    axes[-1].set_xlabel("log(W)")
+    axes[0].set_ylabel("Инструмент")
+    axes[1].set_ylabel("Инструмент")
 
     legend_elements = [
-        Patch(facecolor=color_map[True], label="Relevant"),
-        Patch(facecolor=color_map[False], label="Not relevant"),
+        Patch(facecolor=color_map[True], label="Релевантный"),
+        Patch(facecolor=color_map[False], label="Нерелевантный"),
         Line2D([0], [0], marker='*', color='w',
-               label='Joint relevance',
+               label='Релевантный по обоим параметрам',
                markerfacecolor='#C44E52',
                markersize=10)
     ]
@@ -920,6 +939,8 @@ def plot_moment_relevance_by_beta_and_gamma(df, title=None, significance_level=0
         fig.suptitle(title, fontsize=16, y=0.98)
 
     plt.tight_layout()
+    if savename:
+        plt.savefig(f"data/images/{savename}.png", dpi=400)
     plt.show()
 
 
@@ -1578,9 +1599,9 @@ def plot_optimal_euler_portfolio_graph(
     ax.set_title(title, fontsize=16, pad=18)
 
     legend_items = [
-        ("bridge", r"bridge: $\beta$ and $\gamma$"),
-        ("beta_core", r"$\beta$-core"),
-        ("gamma_core", r"$\gamma$-core"),
+        ("bridge", r"Мост: $\beta$ и $\gamma$"),
+        ("beta_core", r"Дисконт: $\beta$-ядро"),
+        ("gamma_core", r"Риск: $\gamma$-ядро"),
     ]
 
     handles = []

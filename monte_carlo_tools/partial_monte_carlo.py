@@ -90,7 +90,7 @@ def generate_Z_for_CR(
 
     ####### Для conditional теста Z2 выкидывается!!! #############
     Z2 = 10 * grad_gamma + eps2                             # только gamma
-    Z3 = 0.5 * grad_beta + eps3                             # только beta
+    Z3 = 0.5 * grad_beta + eps3                             # только ёbeta
     Z4 = eps4                                               # нерелевантен
     Z5 = eps5                                               # нерелевантен
 
